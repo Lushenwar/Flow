@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Lushenwar/Flow/internal/store"
 )
@@ -21,8 +22,22 @@ func newServer(t *testing.T) (http.Handler, *store.Store, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, "secret", true).Handler(), st, dbPath
+	return New(st, "secret", true, fakeEnforcement{}).Handler(), st, dbPath
 }
+
+// fakeEnforcement stands in for the real enforcer so API tests do not need WFP.
+type fakeEnforcement struct {
+	status map[string]string
+	last   time.Time
+}
+
+func (f fakeEnforcement) Status() map[string]string {
+	if f.status == nil {
+		return map[string]string{"hosts": "active", "dns": "active"}
+	}
+	return f.status
+}
+func (f fakeEnforcement) LastReconcile() time.Time { return f.last }
 
 func get(t *testing.T, h http.Handler, path, token string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -93,6 +108,33 @@ func TestEventsSince(t *testing.T) {
 	json.NewDecoder(get(t, h, "/api/events?since="+strconv.FormatInt(first, 10), "secret").Body).Decode(&rest)
 	if len(rest) != 1 || rest[0].Kind != "service_stop" {
 		t.Fatalf("since filter wrong: %+v", rest)
+	}
+}
+
+func TestHealthReportsLayerFailures(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	enf := fakeEnforcement{
+		status: map[string]string{"hosts": "active", "wfp": "error: needs elevation"},
+		last:   time.Now(),
+	}
+	h := New(st, "secret", false, enf).Handler()
+
+	var got health
+	json.NewDecoder(get(t, h, "/api/health", "secret").Body).Decode(&got)
+	if got.Status != "degraded" {
+		t.Fatalf("a failed layer must degrade health, got %q", got.Status)
+	}
+	if got.Layers["wfp"] != "error: needs elevation" {
+		t.Fatalf("layer detail lost: %v", got.Layers)
+	}
+	if got.Reconcile == "never" {
+		t.Fatal("last reconcile not reported")
 	}
 }
 

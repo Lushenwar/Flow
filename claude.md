@@ -14,10 +14,10 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      1/8 DONE ║
-║  ███░░░░░░░░░░░░░░░░░░░░░░░░░  PHASE 0 COMPLETE          ║
+║  MAST BUILD PROGRESS                      2/8 DONE ║
+║  ███████░░░░░░░░░░░░░░░░░░░░░  PHASE 1 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
-║  Phase 1: Enforcement Core & Reconciliation      [    ]  ║
+║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
 ║  Phase 2: Session State Machine & Time Authority [    ]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [    ]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [    ]  ║
@@ -26,10 +26,14 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 1 (next).
-Status: Daemon runs, signs its state, and serves loopback health. Nothing enforces anything yet —
-the enforcer layers all report `not built` in `/api/health`, which is deliberate: a green light for
-a layer that does not exist is worse than no light.
+Phase: 2 (next).
+Status: Four enforcement layers behind one union, reconciling every 3s. No session logic yet — the
+rule set is fixed at daemon startup via `-block`.
+
+**Unverified:** every layer that needs elevation (WFP filters, resolver pin, `hosts` writes) has been
+built and compile-checked but never run elevated. The browser-level exit criterion — `youtube.com`
+failing in Chrome, Firefox and Edge — is still outstanding. What *is* verified: an unelevated run
+degrades safely, reports each failure per layer in `/api/health`, and leaves system DNS untouched.
 Update this as you finish each step.
 
 **Checks:** `go test ./... && go vet ./... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
@@ -660,6 +664,10 @@ traps will be the person writing it.
 * No history charts. Every number is an instantaneous read; sessions are a flat event log.
 * HMAC key is DPAPI-wrapped to the machine, not a hardware root. TPM sealing would raise the bar and
   also brick sessions on hardware change. Not yet.
+* **WFP does DNS containment, not per-domain IP blocking.** Resolving blocked domains to addresses
+  and filtering those was considered and rejected: CDN addresses are shared, so blocking one takes
+  out unrelated sites, and they rotate faster than a 3s reconcile. A user who types a raw IP, or
+  whose browser has a cached address, is not stopped by the network layer.
 * Reconciliation is a fixed 3s poll, not event-driven — a ~3s window after deleting a rule. Closing it
   needs WFP callouts or `NotifyRouteChange` subscriptions.
 * No rate limit on session starts; ARMING/abort churn writes a lot of signed rows.
