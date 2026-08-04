@@ -1,0 +1,7 @@
+*.exe
+state.db*
+key.bin
+token
+/ui/node_modules/
+/ui/.next/
+/ui/out/

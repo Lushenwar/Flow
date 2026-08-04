@@ -1,9 +1,10 @@
-# CLAUDE.md — Portcullis (Commitment Blocker + Focus Timer, Desktop)
+# CLAUDE.md — Mast (Commitment Blocker + Focus Timer, Desktop)
 
-> Codename is still unresolved. `Mast` (Odysseus tied himself to it — chosen restraint, not
-> imprisonment) and `Rubicon` (cross it, no going back) are both better fits than Portcullis, whose
-> metaphor is backwards: a portcullis keeps invaders out, this app keeps you in. Decide before Phase 0
-> ships, because the name is baked into service registration, install paths, and the binary.
+> **Codename resolved at Phase 0: `Mast`.** Odysseus tied himself to it — chosen restraint, not
+> imprisonment, which is the product thesis in one word. `Portcullis` was backwards (it keeps
+> invaders out; this app keeps you in) and `Rubicon` is one-way, which the escape hatch is not.
+> The name is baked into `paths.AppName`, the service registration, `%ProgramData%\Mast`, and the
+> binaries `mastd` / `mastctl`.
 
 ## WORKFLOW: BRANCH + PR ONLY
 
@@ -13,9 +14,9 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  PORTCULLIS BUILD PROGRESS                      0/8 DONE ║
-║  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░  NOT STARTED               ║
-║  Phase 0: Daemon, Service Install, Signed Store  [    ]  ║
+║  MAST BUILD PROGRESS                      1/8 DONE ║
+║  ███░░░░░░░░░░░░░░░░░░░░░░░░░  PHASE 0 COMPLETE          ║
+║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [    ]  ║
 ║  Phase 2: Session State Machine & Time Authority [    ]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [    ]  ║
@@ -25,8 +26,10 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 0 (not started).
-Status: Design only. Nothing enforces anything yet.
+Phase: 1 (next).
+Status: Daemon runs, signs its state, and serves loopback health. Nothing enforces anything yet —
+the enforcer layers all report `not built` in `/api/health`, which is deliberate: a green light for
+a layer that does not exist is worse than no light.
 Update this as you finish each step.
 
 **Checks:** `go test ./... && go vet ./... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
@@ -35,7 +38,7 @@ Update this as you finish each step.
 
 ## WHAT THIS FILE IS
 
-The authoritative guide for building Portcullis: a desktop commitment device combining a hard-locked
+The authoritative guide for building Mast: a desktop commitment device combining a hard-locked
 focus timer with OS-level distraction blocking. Binding spec for the daemon, the local API, and the
 UI. Where this file and a code comment disagree, this file wins until someone edits this file.
 
@@ -212,7 +215,7 @@ A PR violating one does not merge, regardless of what it improves.
   behind `enforce.Enforcer` so macOS/Linux are additive, not a rewrite.
 * **WFP:** `github.com/tailscale/wf` — production-tested, saves ~1,500 lines of hand-rolled
   `unsafe.Pointer` struct marshalling for `FWPM_FILTER0` and friends.
-* **Store:** SQLite (`modernc.org/sqlite`, cgo-free) at `%ProgramData%\Portcullis\state.db`, every
+* **Store:** SQLite (`modernc.org/sqlite`, cgo-free) at `%ProgramData%\Mast\state.db`, every
   mutable row HMAC-signed, key DPAPI-wrapped.
 * **Local API:** HTTP on `127.0.0.1` only, bearer token, JSON.
 * **UI:** Next.js (App Router, TypeScript strict, Tailwind, Lucide) static export, wrapped in
@@ -226,10 +229,10 @@ A PR violating one does not merge, regardless of what it improves.
 ## ARCHITECTURE
 
 ```text
-portcullis/
+mast/
 ├── cmd/
-│   ├── portcullisd/            # service: main, SCM integration, watchdog
-│   └── portcullisctl/          # debug CLI (read-only in release builds)
+│   ├── mastd/            # service: main, SCM integration, watchdog
+│   └── mastctl/          # debug CLI (read-only in release builds)
 ├── internal/
 │   ├── session/
 │   │   ├── machine.go          # IDLE→ARMING→FOCUS→COMPLETE
@@ -260,9 +263,9 @@ portcullis/
 │       │   ├── BaselineRow.tsx # switch + pending-disable countdown
 │       │   ├── ScheduleRow.tsx
 │       │   └── CommitDialog.tsx
-│       └── lib/                # portcullis-client.ts, use-poll.ts, state.ts (pure)
+│       └── lib/                # mast-client.ts, use-poll.ts, state.ts (pure)
 ├── extension/                  # Phase 7
-└── PORTCULLIS.md               # architecture notes below the API surface
+└── MAST.md               # architecture notes below the API surface
 ```
 
 **Ownership rule:** the daemon owns all authority; the UI owns zero. Delete the UI mid-session and
@@ -352,7 +355,7 @@ when the process does.
 ## LOCAL API SPECIFICATION
 
 `http://127.0.0.1:<port>`, loopback bind only, bearer token from
-`%ProgramData%\Portcullis\token` (ACL: Administrators + interactive user).
+`%ProgramData%\Mast\token` (ACL: Administrators + interactive user).
 
 The token being user-readable is deliberate and safe, because **no verb in this API ends a locked
 session or instantly disables a baseline rule.** Authority is in the state machine, not the transport.
@@ -511,7 +514,7 @@ it's enforced, but it has no switch because you don't control it right now.
 
 ### PHASE 0 — DAEMON, SERVICE INSTALL, SIGNED STORE
 **Exit:** installs as a Windows Service, auto-starts on boot, serves `GET /api/health` on loopback
-with token auth, writes an HMAC-signed row that `portcullisctl verify` confirms and rejects after a
+with token auth, writes an HMAC-signed row that `mastctl verify` confirms and rejects after a
 manual `sqlite3` edit.
 * SCM integration (`x/sys/windows/svc`), install/uninstall, boot auto-start.
 * Store, migrations, DPAPI-wrapped key, `sign.go` round-trip tests.
@@ -545,7 +548,7 @@ true target in every case except (e), which ends 3 minutes early by design.
 **Exit:** two-tab shell; the Blocking screen lists categories with switches; enabling blocks
 immediately; disabling shows a live "unblocks in 14:32 · cancel" countdown while the site stays
 blocked; cancelling is instant; the countdown survives an app restart.
-* `lib/portcullis-client.ts` + `use-poll.ts`, ported from Parallax.
+* `lib/mast-client.ts` + `use-poll.ts`, ported from Parallax.
 * `lib/state.ts` — pure derivations (countdown strings, progress fraction). Unit tested. **No
   component computes time.**
 * Shell: two 13px text tabs top-left, card container. Spec in **VISUAL DESIGN → Shell**.
@@ -617,15 +620,23 @@ Presets are seed data, not code. A user edit forks the preset into a custom list
 
 ```powershell
 # Terminal 1 — daemon, dev mode (console, enforcement DRY-RUN unless elevated)
-go run ./cmd/portcullisd -dev -port 8787
+go run ./cmd/mastd -dev -port 8787
 
 # Terminal 2 — UI
 cd ui; npm run dev          # http://localhost:3000
 
-# Install as a real service (elevated)
-go build -o portcullisd.exe ./cmd/portcullisd
-.\portcullisd.exe install
+# Inspect a running daemon (read-only)
+go run ./cmd/mastctl health
+go run ./cmd/mastctl verify
+
+# Install as a real service (ELEVATED PROMPT REQUIRED — SCM access is denied otherwise)
+go build -o mastd.exe ./cmd/mastd
+.\mastd.exe install
+.\mastd.exe uninstall
 ```
+
+`MAST_DATA_DIR` overrides `%ProgramData%\Mast`. Use it to run a throwaway instance without touching
+the real one.
 
 `-dev` logs every enforcement action instead of applying it. **Use it.** The first person this app
 traps will be the person writing it.
