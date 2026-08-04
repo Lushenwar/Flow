@@ -13,7 +13,7 @@ import (
 
 func isService() bool { return false }
 
-func runService(dev bool, port int) error { return runConsole(dev, port) }
+func runService(dev bool, port int, block []string) error { return runConsole(dev, port, block) }
 
 func install(port int) error {
 	return errors.New("service install is Windows-only for now; run `mastd -dev` in the foreground")

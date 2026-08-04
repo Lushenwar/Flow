@@ -19,11 +19,19 @@ type Server struct {
 	st      *store.Store
 	token   string
 	dev     bool
+	enf     Enforcement
 	started time.Time
 }
 
-func New(st *store.Store, token string, dev bool) *Server {
-	return &Server{st: st, token: token, dev: dev, started: time.Now()}
+// Enforcement is the slice of the enforcer health needs. An interface so the API
+// tests do not have to stand up real WFP filters.
+type Enforcement interface {
+	Status() map[string]string
+	LastReconcile() time.Time
+}
+
+func New(st *store.Store, token string, dev bool, enf Enforcement) *Server {
+	return &Server{st: st, token: token, dev: dev, enf: enf, started: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -63,10 +71,19 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Dev:       s.dev,
 		UptimeSec: int64(time.Since(s.started).Seconds()),
 		Signature: "ok",
-		// Phase 1 fills these in. Reporting "not built" beats reporting a
-		// green light for a layer that does not exist yet.
-		Layers:    map[string]string{"wfp": "not built", "dns": "not built", "hosts": "not built", "process": "not built"},
+		Layers:    map[string]string{},
 		Reconcile: "never",
+	}
+	if s.enf != nil {
+		h.Layers = s.enf.Status()
+		if t := s.enf.LastReconcile(); !t.IsZero() {
+			h.Reconcile = t.UTC().Format(time.RFC3339)
+		}
+		for _, st := range h.Layers {
+			if strings.HasPrefix(st, "error:") {
+				h.Status = "degraded"
+			}
+		}
 	}
 	bad, err := s.st.Verify()
 	switch {

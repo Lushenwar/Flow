@@ -34,6 +34,8 @@ func main() {
 
 	dev := flag.Bool("dev", false, "log enforcement instead of applying it")
 	port := flag.Int("port", 8787, "loopback API port")
+	block := flag.String("block", "preset.adult,preset.gambling",
+		"comma-separated preset ids enforced as baseline (Phase 1: fixed at startup)")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 
@@ -44,7 +46,7 @@ func main() {
 	case "uninstall":
 		err = uninstall()
 	case "":
-		err = run(*dev, *port)
+		err = run(*dev, *port, splitIDs(*block))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -62,15 +64,15 @@ func cmdName(c string) string {
 }
 
 // run picks service mode when the SCM launched us, console mode otherwise.
-func run(dev bool, port int) error {
+func run(dev bool, port int, block []string) error {
 	if isService() {
-		return runService(dev, port)
+		return runService(dev, port, block)
 	}
-	return runConsole(dev, port)
+	return runConsole(dev, port, block)
 }
 
-func runConsole(dev bool, port int) error {
-	d, err := start(dev, port)
+func runConsole(dev bool, port int, block []string) error {
+	d, err := start(dev, port, block)
 	if err != nil {
 		return err
 	}
@@ -85,3 +87,13 @@ func runConsole(dev bool, port int) error {
 
 // dataDir is what uninstall removes. Named here so both platforms agree.
 func dataDir() string { return paths.Dir() }
+
+func splitIDs(s string) []string {
+	var out []string
+	for _, id := range strings.Split(s, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}

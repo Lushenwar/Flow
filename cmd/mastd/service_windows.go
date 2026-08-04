@@ -24,14 +24,15 @@ func isService() bool {
 }
 
 type handler struct {
-	dev  bool
-	port int
+	dev   bool
+	port  int
+	block []string
 }
 
 func (h *handler) Execute(args []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
 
-	d, err := start(h.dev, h.port)
+	d, err := start(h.dev, h.port, h.block)
 	if err != nil {
 		log.Printf("start: %v", err)
 		return false, 1
@@ -53,8 +54,8 @@ func (h *handler) Execute(args []string, req <-chan svc.ChangeRequest, status ch
 	return false, 0
 }
 
-func runService(dev bool, port int) error {
-	return svc.Run(serviceName, &handler{dev: dev, port: port})
+func runService(dev bool, port int, block []string) error {
+	return svc.Run(serviceName, &handler{dev: dev, port: port, block: block})
 }
 
 func install(port int) error {
