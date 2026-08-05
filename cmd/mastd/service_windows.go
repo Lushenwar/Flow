@@ -120,7 +120,19 @@ func uninstall() error {
 	if err := removeService(); err != nil {
 		errs = append(errs, err)
 	}
-	// Phase 1 adds WFP filters and hosts entries to this teardown.
+
+	// Enforcement comes down BEFORE the data directory, and the ordering is the
+	// whole point: the DNS backup lives inside that directory, so removing it
+	// first would strand every adapter pointing at a 127.0.0.1 resolver that is
+	// no longer listening, with no record of what they used to be. That is a
+	// machine with no DNS, caused by the command documented to undo everything.
+	//
+	// WFP filters are already gone — the session was dynamic and died with the
+	// service process. This clears the resolver pin and the hosts block.
+	if err := clearEnforcement(); err != nil {
+		errs = append(errs, err)
+	}
+
 	if err := os.RemoveAll(dataDir()); err != nil {
 		errs = append(errs, fmt.Errorf("remove %s: %w", dataDir(), err))
 	} else {

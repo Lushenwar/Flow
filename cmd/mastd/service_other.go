@@ -20,6 +20,10 @@ func install(port int) error {
 }
 
 func uninstall() error {
+	// Enforcement first: teardown state lives inside the data directory.
+	if err := clearEnforcement(); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(dataDir()); err != nil {
 		return err
 	}
