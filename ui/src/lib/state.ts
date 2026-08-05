@@ -34,6 +34,45 @@ export interface EffectiveView {
   attribution: Record<string, "baseline" | "session" | "schedule">;
 }
 
+export interface ScheduleRow {
+  id: string;
+  name: string;
+  listIds: string[];
+  start: string;
+  end: string;
+  tz: string;
+  enabled: boolean;
+  active: boolean;
+}
+
+export interface BankView {
+  balanceSeconds: number;
+  spending: boolean;
+  remainingSeconds: number;
+}
+
+/** "23:00 – 07:00 · every day", with the pinned zone shown when it differs. */
+export function scheduleWindow(s: ScheduleRow, systemTz?: string): string {
+  const base = `${s.start} – ${s.end}`;
+  if (systemTz && s.tz && s.tz !== systemTz) {
+    // The zone is pinned at creation. Surfacing it explains why the window did
+    // not move when the machine's timezone did.
+    return `${base} ${s.tz}`;
+  }
+  return base;
+}
+
+/** Recreation time reads in whole minutes; seconds are noise at this scale. */
+export function bankLabel(bank: BankView | null): string {
+  if (!bank) return "";
+  if (bank.spending) {
+    return `${formatCountdown(bank.remainingSeconds)} of recreation left`;
+  }
+  const minutes = Math.floor(bank.balanceSeconds / 60);
+  if (minutes <= 0) return "No recreation time banked";
+  return `${minutes} recreation ${minutes === 1 ? "minute" : "minutes"} banked`;
+}
+
 export interface EventRow {
   id: number;
   ts: string;

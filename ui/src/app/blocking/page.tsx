@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { History } from "@/components/History";
+import { ScheduleRowView } from "@/components/ScheduleRow";
 import { ApiError, api } from "@/lib/flow-client";
-import { sessionOwnedIds } from "@/lib/state";
+import {
+  bankLabel,
+  sessionOwnedIds,
+  type BankView,
+  type ScheduleRow,
+} from "@/lib/state";
 import { useNow, usePoll } from "@/lib/use-poll";
 
 export default function BlockingScreen() {
@@ -12,6 +18,21 @@ export default function BlockingScreen() {
   const now = useNow();
   const [busy, setBusy] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+  const [bank, setBank] = useState<BankView | null>(null);
+
+  useEffect(() => {
+    const load = () => {
+      api.schedules().then(setSchedules).catch(() => {});
+      api.bank().then(setBank).catch(() => {});
+    };
+    const first = setTimeout(load, 0);
+    const t = setInterval(load, 5000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+    };
+  }, []);
 
   async function run(id: string, fn: () => Promise<unknown>) {
     setBusy(id);
@@ -95,6 +116,34 @@ export default function BlockingScreen() {
       {refused && (
         <p className="text-[12px] mt-3" style={{ color: "var(--warning)" }}>
           {refused}
+        </p>
+      )}
+
+      {schedules.length > 0 && (
+        <div className="mt-5 pt-3" style={{ borderTop: "0.5px solid var(--hairline)" }}>
+          <p className="text-[12px] mb-1" style={{ color: "var(--text-secondary)" }}>
+            Schedules
+          </p>
+          {schedules.map((s, i) => (
+            <ScheduleRowView
+              key={s.id}
+              row={s}
+              last={i === schedules.length - 1}
+              busy={busy === s.id}
+              onToggle={(enabled) =>
+                run(s.id, async () => {
+                  await api.putSchedule({ ...s, enabled });
+                  setSchedules(await api.schedules());
+                })
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {bank && (
+        <p className="text-[11px] mt-4" style={{ color: "var(--text-muted)" }}>
+          {bankLabel(bank)}
         </p>
       )}
 

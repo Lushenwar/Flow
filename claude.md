@@ -15,19 +15,35 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  FLOW BUILD PROGRESS                      6/8 DONE ║
-║  ██████████████████████░░░░░░  PHASE 7 BUILT, 1 & 7 [~]  ║
+║  FLOW BUILD PROGRESS                      7/8 DONE ║
+║  ██████████████████████████░░  ALL PHASES BUILT, 1 & 7 [~]║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [~   ]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [DONE]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [DONE]  ║
 ║  Phase 5: Escape Hatches & Tamper Event Log      [DONE]  ║
-║  Phase 6: Time Bank & Scheduled Hard-Locks       [    ]  ║
+║  Phase 6: Time Bank & Scheduled Hard-Locks       [DONE]  ║
 ║  Phase 7: Browser Extension & Installer          [~   ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 6 (next).
+Phase: all eight built; 1 and 7 remain `[~]`.
+
+**Phase 6.** Time bank credits 0.2 recreation minutes per focus minute, on the transition into
+COMPLETE only, in the same signed write as the state — so a crash between the two cannot double-pay
+or skip. Aborted and escaped sessions earn nothing. A spend is the one path in the app that lifts
+enforcement without waiting out a delay, so it is hemmed in: IDLE only, deducted up front, and no
+cancel, because "spend 30, use 2, refund 28" is an off switch with extra steps.
+
+Scheduled locks arm from the daemon's own tick with no UI involved, and are attributed to
+`schedule`, so a session ending never lifts them.
+
+**Timezone pinning had a hole worth remembering:** `time.Local.String()` returns the literal
+`"Local"`, and `LoadLocation("Local")` resolves to whatever the machine claims right now — so storing
+that name pinned nothing at all, which is exactly the attack it was meant to stop. Schedules now
+capture the UTC offset at creation and fall back to it whenever the stored name is `"Local"`, empty,
+or unknown. Go has no stdlib Windows-to-IANA mapping, so the offset is the portable anchor. Cost: a
+window pinned that way does not follow DST.
 Status: The escape hatch is complete — request, 15-minute countdown with everything still enforced,
 100-character case-sensitive typed challenge, release. Every drift event, repair, and escape is in
 the log, surfaced as "Recent activity" at the bottom of the Blocking screen.

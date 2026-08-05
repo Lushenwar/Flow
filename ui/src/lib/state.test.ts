@@ -4,6 +4,7 @@ import {
   BaselineRow,
   SessionView,
   arcFraction,
+  bankLabel,
   baselineOnCount,
   dashArray,
   dialAction,
@@ -15,6 +16,7 @@ import {
   pendingLabel,
   progressFraction,
   rowState,
+  scheduleWindow,
   secondsUntil,
   sessionOwnedIds,
   visibleEvents,
@@ -242,6 +244,48 @@ describe("liveRemainingSeconds", () => {
   it("floors at zero past the target", () => {
     const s = session({ state: "FOCUS", targetAt: "2026-08-04T11:59:00Z" });
     expect(liveRemainingSeconds(s, now)).toBe(0);
+  });
+});
+
+describe("scheduleWindow", () => {
+  const s = {
+    id: "b", name: "Bedtime", listIds: ["preset.bedtime"],
+    start: "23:00", end: "07:00", tz: "America/New_York",
+    enabled: true, active: false,
+  };
+
+  it("reads as a window", () => {
+    expect(scheduleWindow(s, "America/New_York")).toBe("23:00 – 07:00");
+  });
+
+  it("surfaces the pinned zone when the machine has moved", () => {
+    // Explains why the window did not shift when the system timezone did.
+    expect(scheduleWindow(s, "Asia/Tokyo")).toContain("America/New_York");
+  });
+});
+
+describe("bankLabel", () => {
+  it("counts down while spending", () => {
+    expect(bankLabel({ balanceSeconds: 0, spending: true, remainingSeconds: 872 }))
+      .toBe("14:32 of recreation left");
+  });
+
+  it("reports whole minutes banked", () => {
+    expect(bankLabel({ balanceSeconds: 600, spending: false, remainingSeconds: 0 }))
+      .toBe("10 recreation minutes banked");
+    expect(bankLabel({ balanceSeconds: 60, spending: false, remainingSeconds: 0 }))
+      .toBe("1 recreation minute banked");
+  });
+
+  it("says nothing is banked rather than showing a bare zero", () => {
+    expect(bankLabel({ balanceSeconds: 0, spending: false, remainingSeconds: 0 }))
+      .toBe("No recreation time banked");
+    expect(bankLabel({ balanceSeconds: 30, spending: false, remainingSeconds: 0 }))
+      .toBe("No recreation time banked");
+  });
+
+  it("renders nothing before the bank has loaded", () => {
+    expect(bankLabel(null)).toBe("");
   });
 });
 
