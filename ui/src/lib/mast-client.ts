@@ -1,4 +1,4 @@
-import type { AppState, BaselineRow } from "./state";
+import type { AppState, BaselineRow, EventRow } from "./state";
 
 /**
  * The daemon owns all authority; this client owns zero. Every call is a request
@@ -61,8 +61,16 @@ export const api = {
   abort: () => call("/api/session", { method: "DELETE" }),
 
   escape: () => call("/api/session/escape", { method: "POST" }),
-  release: () => call("/api/session/release", { method: "POST" }),
+  challenge: () =>
+    call<{ id: string; text: string }>("/api/session/escape/challenge"),
+  verify: (challengeId: string, typed: string) =>
+    call("/api/session/escape/verify", {
+      method: "POST",
+      body: JSON.stringify({ challengeId, typed }),
+    }),
   ack: () => call("/api/session/ack", { method: "POST" }),
+
+  events: (since = 0) => call<EventRow[]>(`/api/events?since=${since}`),
 
   baseline: () => call<BaselineRow[]>("/api/baseline"),
   enable: (id: string) =>

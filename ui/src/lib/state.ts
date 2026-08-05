@@ -34,6 +34,48 @@ export interface EffectiveView {
   attribution: Record<string, "baseline" | "session" | "schedule">;
 }
 
+export interface EventRow {
+  id: number;
+  ts: string;
+  kind: string;
+  data: string;
+}
+
+/**
+ * Copy for the event log. Non-judgmental throughout: "Session ended early", not
+ * "You failed". The log exists to be informative, not to shame anyone into
+ * avoiding it — an escape hatch people are ashamed to use is a trap.
+ */
+export function eventLabel(kind: string): string | null {
+  const labels: Record<string, string> = {
+    session_commit: "Session started",
+    session_FOCUS: "Session locked",
+    session_COMPLETE: "Session finished",
+    session_abort: "Backed out during the grace window",
+    session_escape_requested: "Early end requested",
+    escape_challenge_failed: "Challenge not matched",
+    session_ended_early: "Session ended early",
+    clock_drift: "Clock drift detected",
+    reconcile_repaired: "Blocking rules repaired",
+    reconcile_failed: "Could not repair blocking rules",
+    baseline_enabled: "Block turned on",
+    baseline_disable_requested: "Block scheduled to turn off",
+    baseline_disable_cancelled: "Turn-off cancelled",
+    baseline_disabled: "Block turned off",
+    boot_recovered: "Session restored after restart",
+    session_signature_invalid: "Saved session failed its signature check",
+    baseline_signature_invalid: "Saved blocks failed their signature check",
+  };
+  // Unknown kinds are dropped rather than shown raw: service_start on every
+  // launch is noise, not history.
+  return labels[kind] ?? null;
+}
+
+/** Newest first, unlabelled kinds removed. */
+export function visibleEvents(events: EventRow[]): EventRow[] {
+  return events.filter((e) => eventLabel(e.kind) !== null).reverse();
+}
+
 export interface AppState {
   session: SessionView;
   baseline: BaselineRow[];

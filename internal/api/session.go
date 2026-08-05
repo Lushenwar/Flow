@@ -22,7 +22,8 @@ type Sessions interface {
 	Commit(mode session.Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)
-	Release() (session.Session, error)
+	Challenge() (session.Challenge, error)
+	VerifyEscape(id, typed string) (session.Session, error)
 	Ack() (session.Session, error)
 }
 
@@ -171,10 +172,10 @@ func (s *Server) escape(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// release completes an escape. Phase 5 puts the typed challenge in front of it;
-// the delay itself is already enforced here.
-func (s *Server) release(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.sess.Release()
+// challenge hands out the text to type. Refused until the delay has elapsed, so
+// it cannot be fetched early and pre-typed.
+func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
+	c, err := s.sess.Challenge()
 	if errors.Is(err, session.ErrLocked) {
 		writeJSON(w, http.StatusConflict, errBody("locked"))
 		return
@@ -183,7 +184,32 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"state": string(sess.State)})
+	writeJSON(w, http.StatusOK, c)
+}
+
+type verifyRequest struct {
+	ChallengeID string `json:"challengeId"`
+	Typed       string `json:"typed"`
+}
+
+// verify completes an escape.
+func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
+	var req verifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("bad_request"))
+		return
+	}
+	sess, err := s.sess.VerifyEscape(req.ChallengeID, req.Typed)
+	switch {
+	case errors.Is(err, session.ErrLocked):
+		writeJSON(w, http.StatusConflict, errBody("locked"))
+	case errors.Is(err, session.ErrChallenge):
+		writeJSON(w, http.StatusBadRequest, errBody("challenge_mismatch"))
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"state": string(sess.State)})
+	}
 }
 
 func (s *Server) ack(w http.ResponseWriter, r *http.Request) {

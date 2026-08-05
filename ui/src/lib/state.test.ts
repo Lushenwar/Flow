@@ -8,6 +8,8 @@ import {
   dashArray,
   dialAction,
   dialText,
+  EventRow,
+  eventLabel,
   formatCountdown,
   liveRemainingSeconds,
   pendingLabel,
@@ -15,6 +17,7 @@ import {
   rowState,
   secondsUntil,
   sessionOwnedIds,
+  visibleEvents,
 } from "./state";
 
 const session = (over: Partial<SessionView> = {}): SessionView => ({
@@ -239,6 +242,51 @@ describe("liveRemainingSeconds", () => {
   it("floors at zero past the target", () => {
     const s = session({ state: "FOCUS", targetAt: "2026-08-04T11:59:00Z" });
     expect(liveRemainingSeconds(s, now)).toBe(0);
+  });
+});
+
+describe("event log copy", () => {
+  it("never blames the user", () => {
+    // "Session ended early", not "You failed". An escape hatch people are
+    // ashamed to use is a trap with extra steps.
+    const blaming = /fail(ed|ure)|gave up|you (lost|broke|failed)|cheat|weak/i;
+    for (const kind of [
+      "session_ended_early",
+      "session_abort",
+      "escape_challenge_failed",
+      "session_escape_requested",
+    ]) {
+      const label = eventLabel(kind);
+      expect(label).not.toBeNull();
+      expect(label!).not.toMatch(blaming);
+    }
+  });
+
+  it("labels the events the tamper log exists for", () => {
+    expect(eventLabel("clock_drift")).toBe("Clock drift detected");
+    expect(eventLabel("reconcile_repaired")).toBe("Blocking rules repaired");
+    expect(eventLabel("session_ended_early")).toBe("Session ended early");
+  });
+
+  it("drops unlabelled noise rather than printing raw kinds", () => {
+    expect(eventLabel("service_start")).toBeNull();
+  });
+});
+
+describe("visibleEvents", () => {
+  const rows: EventRow[] = [
+    { id: 1, ts: "2026-08-04T12:00:00Z", kind: "service_start", data: "{}" },
+    { id: 2, ts: "2026-08-04T12:01:00Z", kind: "session_commit", data: "{}" },
+    { id: 3, ts: "2026-08-04T12:02:00Z", kind: "clock_drift", data: "{}" },
+  ];
+
+  it("puts newest first and hides noise", () => {
+    const got = visibleEvents(rows);
+    expect(got.map((e) => e.id)).toEqual([3, 2]);
+  });
+
+  it("survives an empty log", () => {
+    expect(visibleEvents([])).toEqual([]);
   });
 });
 

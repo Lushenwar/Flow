@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,8 +196,9 @@ func TestEscapeStartsACountdownAndDoesNotReleaseEarly(t *testing.T) {
 		t.Fatal("availableAt missing")
 	}
 
-	if code := do(t, h, "POST", "/api/session/release", nil).Code; code != http.StatusConflict {
-		t.Fatal("release before the delay expires must be refused")
+	// The challenge cannot be fetched early and pre-typed.
+	if code := do(t, h, "GET", "/api/session/escape/challenge", nil).Code; code != http.StatusConflict {
+		t.Fatal("the challenge must not be available before the delay elapses")
 	}
 	// Blocks stay fully enforced throughout the countdown.
 	if st.Effective.Attribution["preset.adult"] != enforce.Baseline {
@@ -204,11 +206,79 @@ func TestEscapeStartsACountdownAndDoesNotReleaseEarly(t *testing.T) {
 	}
 
 	c.tick(session.MinDelay)
-	if code := do(t, h, "POST", "/api/session/release", nil).Code; code != http.StatusOK {
-		t.Fatal("release after the delay must succeed")
+	ch := getChallenge(t, h)
+	if len(ch.Text) != session.ChallengeLength {
+		t.Fatalf("challenge is %d characters", len(ch.Text))
+	}
+
+	if code := do(t, h, "POST", "/api/session/escape/verify", verifyRequest{
+		ChallengeID: ch.ID, Typed: strings.ToLower(ch.Text),
+	}).Code; code != http.StatusBadRequest {
+		t.Fatal("the challenge is case-sensitive")
+	}
+	if got := getState(t, h).Session.State; got != session.Releasing {
+		t.Fatalf("a failed attempt must not end the session, state %s", got)
+	}
+
+	if code := do(t, h, "POST", "/api/session/escape/verify", verifyRequest{
+		ChallengeID: ch.ID, Typed: ch.Text,
+	}).Code; code != http.StatusOK {
+		t.Fatal("the exact text after the delay must release")
 	}
 	if got := getState(t, h).Session.State; got != session.Idle {
 		t.Fatalf("state %s after release", got)
+	}
+}
+
+func getChallenge(t *testing.T, h http.Handler) session.Challenge {
+	t.Helper()
+	rec := do(t, h, "GET", "/api/session/escape/challenge", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("challenge returned %d", rec.Code)
+	}
+	var c session.Challenge
+	if err := json.NewDecoder(rec.Body).Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// Every failed attempt is recorded, and none of them shorten anything.
+func TestFailedChallengeAttemptsAreLoggedAndCostNothingButTime(t *testing.T) {
+	h, c := sessionServer(t)
+	do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 60})
+	c.tick(session.DefaultGrace + time.Second)
+	do(t, h, "POST", "/api/session/escape", nil)
+	c.tick(session.MinDelay)
+
+	ch := getChallenge(t, h)
+	for i := 0; i < 3; i++ {
+		do(t, h, "POST", "/api/session/escape/verify", verifyRequest{
+			ChallengeID: ch.ID, Typed: "nope",
+		})
+	}
+	if got := getState(t, h).Session.State; got != session.Releasing {
+		t.Fatalf("state %s", got)
+	}
+
+	// Retrying must not mint a new challenge — that would let someone reroll
+	// until they get a string they like.
+	if again := getChallenge(t, h); again.Text != ch.Text {
+		t.Fatal("challenge changed between attempts")
+	}
+
+	var evs []struct {
+		Kind string `json:"kind"`
+	}
+	json.NewDecoder(do(t, h, "GET", "/api/events", nil).Body).Decode(&evs)
+	failures := 0
+	for _, e := range evs {
+		if e.Kind == "escape_challenge_failed" {
+			failures++
+		}
+	}
+	if failures != 3 {
+		t.Fatalf("logged %d failed attempts, want 3", failures)
 	}
 }
 
@@ -241,7 +311,8 @@ func TestStateShipsTheArcDenominators(t *testing.T) {
 	// IDLE has no session, so there is no ring to draw.
 	do(t, h, "POST", "/api/session/escape", nil)
 	c.tick(session.MinDelay)
-	do(t, h, "POST", "/api/session/release", nil)
+	ch := getChallenge(t, h)
+	do(t, h, "POST", "/api/session/escape/verify", verifyRequest{ChallengeID: ch.ID, Typed: ch.Text})
 	if idle := getState(t, h).Session; idle.DurationSeconds != 0 || idle.TargetAt != nil {
 		t.Fatalf("IDLE still reports a target: %+v", idle)
 	}

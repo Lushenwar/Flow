@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
+import { History } from "@/components/History";
 import { ApiError, api } from "@/lib/mast-client";
 import { sessionOwnedIds } from "@/lib/state";
 import { useNow, usePoll } from "@/lib/use-poll";
@@ -96,6 +97,8 @@ export default function BlockingScreen() {
           {refused}
         </p>
       )}
+
+      <History />
     </>
   );
 }
