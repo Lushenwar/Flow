@@ -12,6 +12,12 @@ type List struct {
 	// Composes names other list IDs whose contents are folded in. preset.work is
 	// video ∪ doomscroll ∪ gaming and should not restate their domains.
 	Composes []string `json:"composes,omitempty"`
+
+	// AllowPaths carves exceptions out of a blocked domain by URL path. The
+	// network layer cannot honour these — HTTPS means it sees `youtube.com` and
+	// never `/watch` vs `/@channel` — so they are enforced only by the browser
+	// extension, and only for browsers that have it installed.
+	AllowPaths map[string][]string `json:"allowPaths,omitempty"`
 }
 
 // Catalog is a set of lists addressable by id.
@@ -58,6 +64,42 @@ func (c Catalog) Resolve(id string) (domains, processes []string) {
 	}
 	walk(id)
 	return keys(ds), keys(ps)
+}
+
+// ResolvePaths collects the path exceptions for a list and everything it
+// composes. A domain with no entry has no exceptions: the whole domain is blocked.
+//
+// Exceptions do not compose across sources — if any active list blocks a domain
+// outright, that wins. Otherwise "study allows /@channel" would quietly unblock
+// channels for a plain `work` session too.
+func (c Catalog) ResolvePaths(ids []string) map[string][]string {
+	out := map[string][]string{}
+	blockedOutright := map[string]bool{}
+
+	for _, id := range ids {
+		l, ok := c[id]
+		if !ok {
+			continue
+		}
+		domains, _ := c.Resolve(id)
+		for _, d := range domains {
+			if _, exempt := l.AllowPaths[d]; !exempt {
+				blockedOutright[d] = true
+			}
+		}
+		for d, pats := range l.AllowPaths {
+			if Allowed(d) {
+				continue
+			}
+			out[d] = append(out[d], pats...)
+		}
+	}
+	for d := range out {
+		if blockedOutright[d] {
+			delete(out, d)
+		}
+	}
+	return out
 }
 
 func keys(m map[string]bool) []string {
@@ -112,8 +154,14 @@ func Presets() Catalog {
 		}},
 		"preset.work": {ID: "preset.work", Name: "Work",
 			Composes: []string{"preset.video", "preset.doomscroll", "preset.gaming"}},
+		// Study is work minus the parts of YouTube that are course material. The
+		// feed, watch pages and Shorts stay blocked; a channel or playlist you
+		// navigated to deliberately does not.
 		"preset.study": {ID: "preset.study", Name: "Study",
-			Composes: []string{"preset.video", "preset.doomscroll", "preset.gaming"}},
+			Composes: []string{"preset.video", "preset.doomscroll", "preset.gaming"},
+			AllowPaths: map[string][]string{
+				"youtube.com": {`^/@`, `^/channel/`, `^/playlist`, `^/c/`, `^/results`},
+			}},
 		// preset.bedtime and preset.offline mean "everything except the allowlist",
 		// which the domain-list model cannot express. Phase 6 gives them a
 		// default-deny flag; until then they are the union of everything named.

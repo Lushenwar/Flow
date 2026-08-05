@@ -15,7 +15,7 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 
 ╔══════════════════════════════════════════════════════════╗
 ║  MAST BUILD PROGRESS                      6/8 DONE ║
-║  ██████████████████████░░░░░░  PHASE 5 COMPLETE          ║
+║  ██████████████████████░░░░░░  PHASE 7 BUILT, 1 & 7 [~]  ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [~   ]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
@@ -23,7 +23,7 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ║  Phase 4: Focus Screen — the Dial & Grace Window [DONE]  ║
 ║  Phase 5: Escape Hatches & Tamper Event Log      [DONE]  ║
 ║  Phase 6: Time Bank & Scheduled Hard-Locks       [    ]  ║
-║  Phase 7: Browser Extension & Installer          [    ]  ║
+║  Phase 7: Browser Extension & Installer          [~   ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
 Phase: 6 (next).
@@ -69,14 +69,24 @@ Uninstall leaves no service, no data dir, no `hosts` block, and the original res
 terminated on rule application", and it is not: a YouTube tab open before enforcement started kept
 serving for about two minutes. See Correction 1. Everything else in Phase 1 passes.
 
-**Still unverified:** Firefox and Edge, and reboot survival of a locked session.
+**Phase 7 (Chrome only) is built.** `GET /api/rules` is unauthenticated by design — an extension
+cannot read `%ProgramData%\Mast\token`, and the endpoint is loopback-only, read-only, and grants no
+authority. The extension adds the two things the network layer structurally cannot do: URL-path
+granularity, and closing tabs that were already open when a session started.
+
+`[~]` because the extension has not been loaded into a browser yet — `chrome://extensions` →
+Developer mode → Load unpacked is a native file picker, so it is the one manual step. The matcher is
+covered by 11 `node --test` cases and `/api/rules` was fetched from Chrome successfully.
+
+**Still unverified:** Firefox and Edge, reboot survival of a locked session, and the extension
+end-to-end in a browser.
 
 **Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
 is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
 does not stop it. Closing this needs the DoH bootstrap *hostnames* NXDOMAINed at the sink.
 Update this as you finish each step.
 
-**Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
+**Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
 
 Scoped to `./cmd/...` and `./internal/...` rather than `./...` because `ui/node_modules` ships a
 stray Go package (`flatted/golang`) that `./...` picks up as part of this module.
