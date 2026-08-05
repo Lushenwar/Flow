@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test rules.test.mjs"
+    "test": "node --test rules.test.mjs coordinator.test.mjs"
   }
 }

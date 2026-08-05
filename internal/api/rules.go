@@ -2,6 +2,7 @@ package api
 
 import (
 	"hash/fnv"
+	"log"
 	"net/http"
 	"strings"
 
@@ -29,6 +30,13 @@ type rulesResponse struct {
 func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	eff := s.sess.Effective()
 	domains := eff.SortedDomains()
+
+	// In dev, say who is polling. "Is the extension's service worker actually
+	// running?" is otherwise unanswerable from outside the browser, and it is the
+	// first question whenever the extension silently stops blocking.
+	if s.dev {
+		log.Printf("rules polled (%d domains)", len(domains))
+	}
 
 	resp := rulesResponse{
 		Enforcing:  len(domains) > 0,
