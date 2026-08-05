@@ -46,7 +46,10 @@ failing in Chrome, Firefox and Edge — is still outstanding. What *is* verified
 degrades safely, reports each failure per layer in `/api/health`, and leaves system DNS untouched.
 Update this as you finish each step.
 
-**Checks:** `go test ./... && go vet ./... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
+**Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
+
+Scoped to `./cmd/...` and `./internal/...` rather than `./...` because `ui/node_modules` ships a
+stray Go package (`flatted/golang`) that `./...` picks up as part of this module.
 
 ---
 
