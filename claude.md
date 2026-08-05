@@ -14,11 +14,11 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      2/8 DONE ║
-║  ███████░░░░░░░░░░░░░░░░░░░░░  PHASE 1 COMPLETE          ║
+║  MAST BUILD PROGRESS                      3/8 DONE ║
+║  ███████████░░░░░░░░░░░░░░░░░  PHASE 2 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
-║  Phase 2: Session State Machine & Time Authority [    ]  ║
+║  Phase 2: Session State Machine & Time Authority [DONE]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [    ]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [    ]  ║
 ║  Phase 5: Escape Hatches & Tamper Event Log      [    ]  ║
@@ -26,9 +26,14 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 2 (next).
-Status: Four enforcement layers behind one union, reconciling every 3s. No session logic yet — the
-rule set is fixed at daemon startup via `-block`.
+Phase: 3 (next).
+Status: Sessions are real. IDLE→ARMING→FOCUS→RELEASING→COMPLETE, every transition a signed write,
+elapsed credited at the rate of the slowest credible source. Baseline is still fixed at daemon
+startup via `-block` — Phase 3 makes it mutable.
+
+The watchdog is the SCM's own recovery configuration (3 restarts, 60s reset window), not a respawn
+loop of our own. It does not fire on a deliberate SCM stop, which is exactly the required semantics
+with no code to get wrong.
 
 **Unverified:** every layer that needs elevation (WFP filters, resolver pin, `hosts` writes) has been
 built and compile-checked but never run elevated. The browser-level exit criterion — `youtube.com`

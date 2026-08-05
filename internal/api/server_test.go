@@ -22,7 +22,7 @@ func newServer(t *testing.T) (http.Handler, *store.Store, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, "secret", true, fakeEnforcement{}).Handler(), st, dbPath
+	return New(st, "secret", true, fakeEnforcement{}, nil).Handler(), st, dbPath
 }
 
 // fakeEnforcement stands in for the real enforcer so API tests do not need WFP.
@@ -123,7 +123,7 @@ func TestHealthReportsLayerFailures(t *testing.T) {
 		status: map[string]string{"hosts": "active", "wfp": "error: needs elevation"},
 		last:   time.Now(),
 	}
-	h := New(st, "secret", false, enf).Handler()
+	h := New(st, "secret", false, enf, nil).Handler()
 
 	var got health
 	json.NewDecoder(get(t, h, "/api/health", "secret").Body).Decode(&got)

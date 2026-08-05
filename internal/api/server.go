@@ -20,6 +20,7 @@ type Server struct {
 	token   string
 	dev     bool
 	enf     Enforcement
+	sess    Sessions
 	started time.Time
 }
 
@@ -30,14 +31,23 @@ type Enforcement interface {
 	LastReconcile() time.Time
 }
 
-func New(st *store.Store, token string, dev bool, enf Enforcement) *Server {
-	return &Server{st: st, token: token, dev: dev, enf: enf, started: time.Now()}
+func New(st *store.Store, token string, dev bool, enf Enforcement, sess Sessions) *Server {
+	return &Server{st: st, token: token, dev: dev, enf: enf, sess: sess, started: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/events", s.events)
+	if s.sess != nil {
+		mux.HandleFunc("GET /api/state", s.state)
+		mux.HandleFunc("POST /api/session", s.commit)
+		// No stop verb exists. DELETE is valid only in ARMING.
+		mux.HandleFunc("DELETE /api/session", s.abort)
+		mux.HandleFunc("POST /api/session/escape", s.escape)
+		mux.HandleFunc("POST /api/session/release", s.release)
+		mux.HandleFunc("POST /api/session/ack", s.ack)
+	}
 	return s.auth(mux)
 }
 
