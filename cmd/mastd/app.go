@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Lushenwar/Flow/internal/blocklist"
 	"github.com/Lushenwar/Flow/internal/enforce"
 	"github.com/Lushenwar/Flow/internal/paths"
+	"github.com/Lushenwar/Flow/internal/session"
 	"github.com/Lushenwar/Flow/internal/store"
 )
 
@@ -19,6 +21,7 @@ type daemon struct {
 	st     *store.Store
 	srv    *http.Server
 	enf    *enforce.Enforcer
+	mgr    *session.Manager
 	cancel context.CancelFunc
 }
 
@@ -61,25 +64,29 @@ func start(dev bool, port int, blockIDs []string) (*daemon, error) {
 		}
 	}, enforce.Layers(paths.Dir(), dev)...)
 
-	var rules []enforce.Rule
-	for _, id := range blockIDs {
-		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Baseline})
+	mgr := session.NewManager(st, session.SystemClock{}, enf, blocklist.Presets(), blockIDs)
+	if err := mgr.Load(); err != nil {
+		st.Close()
+		ln.Close()
+		return nil, fmt.Errorf("restore session: %w", err)
 	}
-	eff := enforce.Union(blocklist.Presets(), rules)
-	log.Printf("baseline: %v - %d domains, %d processes",
-		eff.SortedLists(), len(eff.Domains), len(eff.Processes))
-	enf.Set(eff)
+	if s := mgr.Snapshot(); s.Active() {
+		log.Printf("session restored: %s, %v remaining", s.State, s.Target.Remaining(mgr.Clock(), nil))
+	}
+	log.Printf("baseline: %v", blockIDs)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go enf.Run(ctx, reconcileEvery)
+	go mgr.Run(ctx)
 
 	log.Printf("listening on http://%s (token: %s)", ln.Addr(), paths.Token())
 
 	d := &daemon{
 		st:     st,
 		enf:    enf,
+		mgr:    mgr,
 		cancel: cancel,
-		srv:    &http.Server{Handler: api.New(st, token, dev, enf).Handler()},
+		srv:    &http.Server{Handler: api.New(st, token, dev, enf, mgr).Handler()},
 	}
 	go func() {
 		if err := d.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -91,10 +98,15 @@ func start(dev bool, port int, blockIDs []string) (*daemon, error) {
 
 func (d *daemon) stop() {
 	d.cancel()
-	// Enforcement is torn down on shutdown because Phase 1 has no session to
-	// protect yet. Phase 2 makes this conditional on the state machine — a
-	// service stop must not become an off switch.
-	d.enf.Clear()
+	// Only tear enforcement down when there is nothing to protect. A service stop
+	// during a locked session must not become an off switch: the hosts entries
+	// stay, and the daemon re-applies the rest when it comes back.
+	if s := d.mgr.Snapshot(); !s.Active() {
+		d.enf.Clear()
+	} else {
+		log.Printf("session still active (%v remaining); leaving enforcement in place",
+			s.Target.Remaining(d.mgr.Clock(), nil))
+	}
 
 	if _, err := d.st.Append("service_stop", "{}"); err != nil {
 		log.Printf("event log: %v", err)

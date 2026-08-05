@@ -86,6 +86,22 @@ func install(port int) error {
 	}
 	defer s.Close()
 
+	// The watchdog is the SCM's own recovery mechanism, not a respawn loop of our
+	// own. It restarts us on unexpected termination and does NOT fire when an
+	// elevated user stops the service deliberately — exactly the semantics the
+	// non-negotiable asks for, with no code to get wrong.
+	//
+	// Three restarts then give up, with the counter resetting each minute: that is
+	// the "cap respawns, do not resurrect indefinitely" rule.
+	if err := s.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+		{Type: mgr.NoAction},
+	}, 60); err != nil {
+		log.Printf("set recovery actions: %v (service installed without a watchdog)", err)
+	}
+
 	if err := s.Start(); err != nil {
 		return fmt.Errorf("created but failed to start: %w", err)
 	}
