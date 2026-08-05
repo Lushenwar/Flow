@@ -60,4 +60,8 @@ chrome.alarms.create("poll", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(() => flow.refresh());
 setInterval(() => flow.refresh(), POLL_MS);
 
-flow.prime();
+// A browser restart is the warm-tab case again: Chrome restores the tabs from
+// last session, and the rule version has not changed since, so a change-driven
+// sweep never fires. Sweep once on startup instead of waiting for a change that
+// will not come. Safe after prime() resolves — sweeping during it deadlocks.
+flow.prime().then(() => flow.sweepAllTabs());

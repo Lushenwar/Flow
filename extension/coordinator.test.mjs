@@ -91,6 +91,22 @@ test("an unchanged version does not re-sweep", async () => {
   assert.equal(state.updates.length, first, "same version must not trigger a sweep");
 });
 
+// Browser restart: Chrome restores tabs, and the rule version has not changed
+// since, so nothing change-driven ever fires. Startup must sweep on its own.
+test("a startup sweep after priming catches restored tabs", async () => {
+  const { co, state } = harness({
+    tabs: [
+      { id: 1, url: "https://www.reddit.com/" },
+      { id: 2, url: "https://go.dev/" },
+    ],
+  });
+
+  await withTimeout(co.prime().then(() => co.sweepAllTabs()));
+
+  assert.equal(state.updates.length, 1);
+  assert.equal(state.updates[0].id, 1);
+});
+
 test("a daemon that is down blocks nothing and does not throw", async () => {
   const co = createCoordinator({
     fetchJSON: async () => {

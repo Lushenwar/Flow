@@ -66,26 +66,43 @@ Uninstall leaves no service, no data dir, no `hosts` block, and the original res
 `reddit.com` and `music.youtube.com` fail immediately; `wikipedia.org` and `cdc.gov` load normally;
 `youtube.com` works again the moment the daemon is torn down.
 
-**Phase 1 is reopened to `[~]` by that run.** Its exit criterion says "an already-open stream is
-terminated on rule application", and it is not: a YouTube tab open before enforcement started kept
-serving for about two minutes. See Correction 1. Everything else in Phase 1 passes.
+**Phase 1 stays `[~]`.** Its exit criterion says "an already-open stream is terminated on rule
+application", and the network layer still does not do that — a YouTube tab open before enforcement
+started kept serving for about two minutes. The extension now closes that gap in Chrome, but Phase 1
+is about the enforcer, and a browser without the extension is still exposed. See Correction 1.
 
 **Phase 7 (Chrome only) is built.** `GET /api/rules` is unauthenticated by design — an extension
 cannot read `%ProgramData%\Flow\token`, and the endpoint is loopback-only, read-only, and grants no
 authority. The extension adds the two things the network layer structurally cannot do: URL-path
 granularity, and closing tabs that were already open when a session started.
 
-**The warm-tab fix works.** Loaded in Chrome, with a YouTube `/watch` tab open, committing a session
-that blocks `preset.video` redirected that open tab to the blocked page within 5 seconds. That is
-the Correction 1 gap closed — by the extension, not by the network layer, which still cannot do it.
+**Verified in Chrome (2026-08-05), extension loaded:**
 
-**Race found and fixed in the same run:** MV3 suspends the service worker after ~30s idle and re-runs
-the file on the next event. `checkTab` was evaluating against `rules === null` because the fetch had
-not resolved, so the first navigation after every wake sailed through — measured on a YouTube
-`/watch`. Rules are now cached in `chrome.storage.session` and every check awaits a priming promise.
+| Check | Result |
+|---|---|
+| `reddit.com` | redirected to the blocked page |
+| `youtube.com/watch?v=…` | blocked |
+| `youtube.com/@veritasium` | reachable — the exit criterion |
+| `amazon.com` open, then commit a session blocking it | swept to the blocked page within 6s |
 
-`[~]` until the fixed build is re-verified in the browser, and because `install.ps1` is not the
-signed installer the exit criterion asks for.
+That last row is the Correction 1 gap closed, by the extension rather than the network layer, which
+still cannot do it.
+
+**Two bugs found by loading it, both invisible to the tests that existed:**
+
+1. MV3 suspends the service worker after ~30s idle. `checkTab` evaluated against `rules === null`,
+   so the first navigation after every wake sailed through. Rules now cache in
+   `chrome.storage.session` and every check awaits a priming promise.
+2. Fixing (1) introduced a deadlock: `prime()` → `fetchRules()` → first fetch always "changed" →
+   `sweepAllTabs()` → `checkTab()` → `await prime()`, still pending. Nothing was ever blocked, while
+   `setInterval` kept polling so the daemon logged a healthy poll every 2 seconds. **The obvious
+   health signal was the one thing still working.** Priming now refreshes with `sweep: false`.
+
+The orchestration moved to `coordinator.js` with the chrome APIs injected, because neither bug was
+reachable from the pure matcher tests. Its deadlock guard rejects rather than hanging, so a
+recurrence fails the run instead of looking green.
+
+`[~]` only because `install.ps1` is not the signed installer the exit criterion asks for.
 
 **Still unverified:** Firefox and Edge, and reboot survival of a locked session.
 
