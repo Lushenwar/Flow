@@ -1,10 +1,12 @@
 package enforce
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Hosts is the secondary layer. It is best-effort by design: DNS-over-HTTPS, raw
@@ -65,7 +67,7 @@ func (h *Hosts) Apply(eff Effective) error {
 	if next == string(cur) {
 		return nil
 	}
-	return writeFileAtomic(h.Path, []byte(next))
+	return writeHosts(h.Path, []byte(next))
 }
 
 func (h *Hosts) Drifted(eff Effective) (bool, error) {
@@ -118,14 +120,43 @@ func replaceBlock(cur, want string) string {
 	return cur + "\n" + want
 }
 
-func writeFileAtomic(path string, data []byte) error {
+// writeHosts replaces the file, retrying the rename before falling back to an
+// in-place write.
+//
+// Observed on the first elevated run: the very first apply failed with
+// "rename hosts.mast.tmp hosts: Access is denied", and the identical write
+// succeeded on the next reconcile tick 3 seconds later. Windows guards the hosts
+// file, and the denial is intermittent rather than absolute. Retrying inline
+// makes the first apply land instead of leaving a hole until reconcile notices.
+func writeHosts(path string, data []byte) error {
+	replaceErr := replaceViaTemp(path, data)
+	if replaceErr == nil {
+		return nil
+	}
+
+	// Replacing the file was refused — at the temp write or at the rename, both
+	// of which Windows guards. Try writing through the file instead. That opens a
+	// torn-write window on a crash, which the 3s reconcile closes; a hosts layer
+	// that never writes is a layer that does not exist.
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("replace failed (%v) and in-place write failed: %w", replaceErr, err)
+	}
+	return nil
+}
+
+func replaceViaTemp(path string, data []byte) error {
 	tmp := path + ".mast.tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+	var err error
+	for i := 0; i < 3; i++ {
+		if err = os.Rename(tmp, path); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	// Never leave a stray hosts.mast.tmp in %SystemRoot%\System32\drivers\etc.
+	os.Remove(tmp)
+	return err
 }

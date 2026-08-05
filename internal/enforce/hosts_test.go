@@ -116,6 +116,54 @@ func TestHostsClearLeavesNoResidue(t *testing.T) {
 	}
 }
 
+// The temp file lives in %SystemRoot%\System32\drivers\etc. Leaving one there is
+// residue in a directory nobody expects us to touch.
+func TestHostsLeavesNoTempFileBehind(t *testing.T) {
+	h := tempHosts(t, userEntries)
+	eff := Union(cat, []Rule{{"preset.video", Session}})
+
+	for i := 0; i < 3; i++ {
+		if err := h.Apply(eff); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(h.Path + ".mast.tmp"); !os.IsNotExist(err) {
+		t.Fatal("temp file left in the hosts directory")
+	}
+}
+
+// A write path that gives up on the first refusal leaves the layer inert. The
+// real hosts file intermittently denies the replace, so falling through to an
+// in-place write matters more than atomicity here.
+func TestHostsWriteFallsBackWhenReplaceIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(path, []byte(userEntries), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A directory where the temp file wants to go makes the rename fail without
+	// making the target unwritable — the same shape as the observed denial.
+	if err := os.Mkdir(path+".mast.tmp", 0o755); err != nil {
+		t.Skipf("cannot stage the failure on this platform: %v", err)
+	}
+	defer os.RemoveAll(path + ".mast.tmp")
+
+	if err := writeHosts(path, []byte("written anyway\n")); err != nil {
+		t.Fatalf("gave up instead of falling back: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "written anyway\n" {
+		t.Fatalf("fallback did not write: %q", got)
+	}
+}
+
 func TestHostsHandlesMissingFile(t *testing.T) {
 	h := &Hosts{Path: filepath.Join(t.TempDir(), "nope", "..", "hosts")}
 	eff := Union(cat, []Rule{{"preset.video", Session}})
