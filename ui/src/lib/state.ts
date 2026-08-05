@@ -16,9 +16,11 @@ export interface SessionView {
   targetAt: string | null;
   remainingSeconds: number;
   canRelease: boolean;
-  graceRemainingSeconds: number;
   blocklistIds: string[];
   escape: { requested: boolean; availableAt: string | null };
+  durationSeconds: number;
+  graceRemainingSeconds: number;
+  graceSeconds: number;
 }
 
 export interface BaselineRow {
@@ -66,6 +68,51 @@ export const DIAL_CIRCUMFERENCE = 2 * Math.PI * DIAL_RADIUS;
 export function dashArray(fraction: number): string {
   const filled = DIAL_CIRCUMFERENCE * progressFraction(fraction, 1);
   return `${filled} ${DIAL_CIRCUMFERENCE}`;
+}
+
+/**
+ * How full the ring should be.
+ *
+ * ARMING sweeps the grace window, because that is the countdown the user is
+ * watching and can still back out of. FOCUS and RELEASING sweep the session.
+ * IDLE is empty, COMPLETE is full.
+ */
+export function arcFraction(session: SessionView): number {
+  switch (session.state) {
+    case "ARMING":
+      return progressFraction(
+        session.graceSeconds - session.graceRemainingSeconds,
+        session.graceSeconds,
+      );
+    case "FOCUS":
+    case "RELEASING":
+      return progressFraction(
+        session.durationSeconds - session.remainingSeconds,
+        session.durationSeconds,
+      );
+    case "COMPLETE":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * What a tap on the dial does. There is deliberately no action in FOCUS or
+ * RELEASING — the tap is inert and there is no control to render.
+ */
+export type DialAction = "commit" | "abort" | "none";
+
+export function dialAction(session: SessionView): DialAction {
+  switch (session.state) {
+    case "IDLE":
+    case "COMPLETE":
+      return "commit";
+    case "ARMING":
+      return "abort";
+    default:
+      return "none";
+  }
 }
 
 /** Seconds until an ISO instant, floored at 0. Never negative. */
@@ -121,11 +168,24 @@ export interface DialText {
   coverage?: string;
 }
 
+/**
+ * The countdown the dial shows, derived from the daemon's absolute instant on
+ * every tick rather than from a local accumulator. A setInterval that decrements
+ * a number drifts, and resets when the window does.
+ */
+export function liveRemainingSeconds(session: SessionView, now: number): number {
+  if (session.targetAt) return secondsUntil(session.targetAt, now);
+  return session.remainingSeconds;
+}
+
 export function dialText(
   session: SessionView,
   baselineOnCount: number,
   chosenMinutes: number,
+  now?: number,
 ): DialText {
+  const remaining =
+    now === undefined ? session.remainingSeconds : liveRemainingSeconds(session, now);
   const coverage =
     baselineOnCount === 1
       ? "1 block always on"
@@ -134,19 +194,19 @@ export function dialText(
   switch (session.state) {
     case "ARMING":
       return {
-        countdown: formatCountdown(session.remainingSeconds),
+        countdown: formatCountdown(remaining),
         status: `starting in ${session.graceRemainingSeconds}s`,
         hint: "tap to cancel",
       };
     case "FOCUS":
       return {
-        countdown: formatCountdown(session.remainingSeconds),
+        countdown: formatCountdown(remaining),
         status: "locked in",
         hint: "no way to stop this",
       };
     case "RELEASING":
       return {
-        countdown: formatCountdown(session.remainingSeconds),
+        countdown: formatCountdown(remaining),
         status: "ending early",
         hint: "still blocked until the countdown ends",
       };

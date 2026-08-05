@@ -212,6 +212,41 @@ func TestEscapeStartsACountdownAndDoesNotReleaseEarly(t *testing.T) {
 	}
 }
 
+// The dial cannot draw its ring without the denominators, and a restarted
+// window has no memory of what was asked for.
+func TestStateShipsTheArcDenominators(t *testing.T) {
+	h, c := sessionServer(t)
+	do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 25})
+
+	arming := getState(t, h).Session
+	if arming.DurationSeconds != 1500 {
+		t.Fatalf("durationSeconds %d, want 1500", arming.DurationSeconds)
+	}
+	if arming.GraceSeconds != int(session.DefaultGrace.Seconds()) {
+		t.Fatalf("graceSeconds %d, want %v", arming.GraceSeconds, session.DefaultGrace)
+	}
+	if arming.GraceRemainingSeconds == 0 {
+		t.Fatal("grace countdown missing during ARMING")
+	}
+
+	c.tick(session.DefaultGrace + time.Second)
+	focus := getState(t, h).Session
+	if focus.DurationSeconds != 1500 {
+		t.Fatalf("durationSeconds lost in FOCUS: %d", focus.DurationSeconds)
+	}
+	if focus.GraceRemainingSeconds != 0 {
+		t.Fatalf("grace should be spent, got %d", focus.GraceRemainingSeconds)
+	}
+
+	// IDLE has no session, so there is no ring to draw.
+	do(t, h, "POST", "/api/session/escape", nil)
+	c.tick(session.MinDelay)
+	do(t, h, "POST", "/api/session/release", nil)
+	if idle := getState(t, h).Session; idle.DurationSeconds != 0 || idle.TargetAt != nil {
+		t.Fatalf("IDLE still reports a target: %+v", idle)
+	}
+}
+
 func TestStateSurvivesAClockJump(t *testing.T) {
 	h, c := sessionServer(t)
 	do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 30})
