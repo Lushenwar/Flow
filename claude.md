@@ -14,22 +14,30 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      5/8 DONE ║
-║  ██████████████████░░░░░░░░░░  PHASE 4 COMPLETE          ║
+║  MAST BUILD PROGRESS                      6/8 DONE ║
+║  ██████████████████████░░░░░░  PHASE 5 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [DONE]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [DONE]  ║
-║  Phase 5: Escape Hatches & Tamper Event Log      [    ]  ║
+║  Phase 5: Escape Hatches & Tamper Event Log      [DONE]  ║
 ║  Phase 6: Time Bank & Scheduled Hard-Locks       [    ]  ║
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 5 (next).
-Status: Both screens are built. The dial commits, sweeps a 15-second arming ring with a working
-second-tap abort, and goes inert once locked. Baseline rules carry the asymmetric friction (instant
-on, 15-minute off).
+Phase: 6 (next).
+Status: The escape hatch is complete — request, 15-minute countdown with everything still enforced,
+100-character case-sensitive typed challenge, release. Every drift event, repair, and escape is in
+the log, surfaced as "Recent activity" at the bottom of the Blocking screen.
+
+`POST /api/session/release` is gone; `GET /api/session/escape/challenge` and
+`POST /api/session/escape/verify` replace it. The challenge is refused until `availableAt` has
+passed, so it cannot be fetched early and pre-typed, and it is held in memory rather than the store —
+a daemon restart costs a retype and never shortens the wait.
+
+The history list lives on the Blocking screen rather than a third tab. Two screens is a hard
+constraint, and a list is not a control.
 
 `GET /api/state` ships `durationSeconds` and `graceSeconds` alongside the remaining counts. Without
 the denominators the UI would have to remember what it asked for, and a reopened window would draw

@@ -36,8 +36,9 @@ type Manager struct {
 	clock    Clock
 	enf      Enforcement
 	cat      blocklist.Catalog
-	sess     Session
-	baseline *Baseline
+	sess      Session
+	baseline  *Baseline
+	challenge Challenge
 }
 
 func NewManager(st *store.Store, c Clock, enf Enforcement, cat blocklist.Catalog, baseline []string) *Manager {
@@ -147,10 +148,54 @@ func (m *Manager) RequestEscape(after time.Duration) (Session, error) {
 	})
 }
 
-func (m *Manager) Release() (Session, error) {
-	return m.transition("session_escaped", func(s Session) (Session, error) {
-		return s.Release(m.clock, nil)
-	})
+// Challenge returns the typed challenge, generating one on first ask. It is
+// refused until the escape delay has run out — the delay is the friction, the
+// typing is only proof you meant it.
+//
+// ponytail: held in memory, not the store. A daemon restart mints a new one,
+// which costs a retype and never shortens the wait.
+func (m *Manager) Challenge() (Challenge, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.sess.State != Releasing || !m.sess.Escape.Available(m.clock, nil) {
+		return Challenge{}, ErrLocked
+	}
+	if m.challenge.ID == "" {
+		c, err := NewChallenge()
+		if err != nil {
+			return Challenge{}, err
+		}
+		m.challenge = c
+	}
+	return m.challenge, nil
+}
+
+// VerifyEscape ends the session early. Accepted only at or after availableAt,
+// and only for the exact challenge text.
+func (m *Manager) VerifyEscape(id, typed string) (Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.sess.State != Releasing || !m.sess.Escape.Available(m.clock, nil) {
+		return m.sess, ErrLocked
+	}
+	if m.challenge.ID == "" || !m.challenge.Matches(id, typed) {
+		m.event("escape_challenge_failed", "{}")
+		return m.sess, ErrChallenge
+	}
+
+	next, err := m.sess.Release(m.clock, nil)
+	if err != nil {
+		return m.sess, err
+	}
+	m.sess = next
+	m.challenge = Challenge{}
+	m.event("session_ended_early", "{}")
+	m.applyLocked()
+	return m.sess, m.persistLocked()
 }
 
 func (m *Manager) Ack() (Session, error) {

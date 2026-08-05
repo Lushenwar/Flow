@@ -45,7 +45,8 @@ func (s *Server) Handler() http.Handler {
 		// No stop verb exists. DELETE is valid only in ARMING.
 		mux.HandleFunc("DELETE /api/session", s.abort)
 		mux.HandleFunc("POST /api/session/escape", s.escape)
-		mux.HandleFunc("POST /api/session/release", s.release)
+		mux.HandleFunc("GET /api/session/escape/challenge", s.challenge)
+		mux.HandleFunc("POST /api/session/escape/verify", s.verify)
 		mux.HandleFunc("POST /api/session/ack", s.ack)
 
 		mux.HandleFunc("GET /api/baseline", s.baselineList)

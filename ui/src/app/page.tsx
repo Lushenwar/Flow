@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CommitDialog } from "@/components/CommitDialog";
 import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
+import { EscapeDialog } from "@/components/EscapeDialog";
 import { api } from "@/lib/mast-client";
 import {
   arcFraction,
@@ -24,6 +25,7 @@ export default function FocusScreen() {
   const now = useNow();
   const [minutes, setMinutes] = useState<number>(DURATIONS[1]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [escapeOpen, setEscapeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!state) {
@@ -107,6 +109,31 @@ export default function FocusScreen() {
         no off switch until 0:00
       </div>
 
+      {/* The escape hatch is always reachable while locked. Understated, not
+          hidden: hiding it would make it a trap, foregrounding it would make it
+          the obvious next click. */}
+      {(session.state === "FOCUS" || session.state === "RELEASING") && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (!session.escape.requested) {
+              setBusy(true);
+              try {
+                await api.escape();
+              } finally {
+                setBusy(false);
+                refresh();
+              }
+            }
+            setEscapeOpen(true);
+          }}
+          className="text-[11px] mt-3 underline underline-offset-2"
+          style={{ color: "var(--text-muted)" }}
+        >
+          {session.escape.requested ? "ending early…" : "end early"}
+        </button>
+      )}
+
       {dialogOpen && (
         <CommitDialog
           minutes={minutes}
@@ -114,6 +141,18 @@ export default function FocusScreen() {
           escapeMinutes={ESCAPE_MINUTES}
           onCancel={() => setDialogOpen(false)}
           onConfirm={commit}
+        />
+      )}
+
+      {escapeOpen && (
+        <EscapeDialog
+          session={session}
+          now={now}
+          onClose={() => setEscapeOpen(false)}
+          onReleased={() => {
+            setEscapeOpen(false);
+            refresh();
+          }}
         />
       )}
     </div>
