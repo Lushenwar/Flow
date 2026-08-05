@@ -15,7 +15,10 @@ type Sessions interface {
 	Snapshot() session.Session
 	Clock() session.Clock
 	Effective() enforce.Effective
-	Baseline() []string
+	Baseline() []session.BaselineRule
+	EnableBaseline(id string) error
+	DisableBaseline(id string) (*time.Time, error)
+	CancelBaselineDisable(id string) error
 	Commit(mode session.Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)
@@ -85,16 +88,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		view.GraceRemainingSeconds = int(sess.Grace.Remaining(c, nil).Seconds())
 	}
 
-	// Phase 3 makes baseline mutable; for now it reports what the daemon was
-	// started with, so the shape the UI polls does not change under it.
-	rows := []baselineRow{}
-	for _, id := range s.sess.Baseline() {
-		rows = append(rows, baselineRow{ID: id, Enabled: true})
-	}
-
 	writeJSON(w, http.StatusOK, stateResponse{
 		Session:  view,
-		Baseline: rows,
+		Baseline: s.baselineRows(),
 		Effective: effectiveView{
 			BlockedIDs:  eff.SortedLists(),
 			Attribution: eff.Lists,

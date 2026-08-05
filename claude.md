@@ -14,22 +14,27 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      3/8 DONE ║
-║  ███████████░░░░░░░░░░░░░░░░░  PHASE 2 COMPLETE          ║
+║  MAST BUILD PROGRESS                      4/8 DONE ║
+║  ██████████████░░░░░░░░░░░░░░  PHASE 3 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
-║  Phase 3: UI Shell + Blocking Screen (baseline)  [    ]  ║
+║  Phase 3: UI Shell + Blocking Screen (baseline)  [DONE]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [    ]  ║
 ║  Phase 5: Escape Hatches & Tamper Event Log      [    ]  ║
 ║  Phase 6: Time Bank & Scheduled Hard-Locks       [    ]  ║
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 3 (next).
-Status: Sessions are real. IDLE→ARMING→FOCUS→RELEASING→COMPLETE, every transition a signed write,
-elapsed credited at the rate of the slowest credible source. Baseline is still fixed at daemon
-startup via `-block` — Phase 3 makes it mutable.
+Phase: 4 (next).
+Status: Both halves exist. Baseline rules are mutable with the asymmetric friction (instant on,
+15-minute off), the two-tab shell and Blocking screen are built, and the Focus screen is a text-only
+placeholder until the dial lands.
+
+**Deviation from the file layout above:** baseline rules live in `internal/session/baseline.go`, not
+`internal/baseline/`. They consume `Delay`, `Delay` consumes `Clock`, and a separate package would
+need a third one holding the time primitives purely to break the import cycle — more structure than
+one struct earns.
 
 The watchdog is the SCM's own recovery configuration (3 restarts, 60s reset window), not a respawn
 loop of our own. It does not fire on a deliberate SCM stop, which is exactly the required semantics
@@ -631,8 +636,11 @@ Presets are seed data, not code. A user edit forks the preset into a custom list
 # Terminal 1 — daemon, dev mode (console, enforcement DRY-RUN unless elevated)
 go run ./cmd/mastd -dev -port 8787
 
-# Terminal 2 — UI
-cd ui; npm run dev          # http://localhost:3000
+# Terminal 2 — UI. The token is in %ProgramData%\Mast\token (or $env:MAST_DATA_DIR\token).
+cd ui
+$env:NEXT_PUBLIC_MAST_URL   = "http://127.0.0.1:8787"
+$env:NEXT_PUBLIC_MAST_TOKEN = (Get-Content "$env:ProgramData\Mast\token").Trim()
+npm run dev                 # http://localhost:3000
 
 # Inspect a running daemon (read-only)
 go run ./cmd/mastctl health

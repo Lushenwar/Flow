@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+  Colour appears exactly twice in this app: the progress arc and on-switches.
+  Both mean the same thing — "enforcement is live". Everything else is greyscale,
+  so colour carries signal instead of decorating.
+*/
+:root {
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --hairline: rgba(0, 0, 0, 0.12);
+  --text: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #8b8b93;
+  --accent: #35785a;
+  --accent-tint: rgba(53, 120, 90, 0.12);
+  --warning: #8a5a12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111113;
+    --surface: #1a1a1d;
+    --hairline: rgba(255, 255, 255, 0.14);
+    --text: #ededf0;
+    --text-secondary: #a1a1aa;
+    --text-muted: #71717a;
+    --accent: #5ba97e;
+    --accent-tint: rgba(91, 169, 126, 0.16);
+    --warning: #d1a054;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+  The countdown is monospace and that is not decoration. Proportional digits
+  change width as they tick, so the whole number jitters left-right once a
+  second — which you notice in your peripheral vision for an hour.
+*/
+.tabular {
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Flat: 0.5px border, 12px radius, no gradients, no shadows. */
+.card {
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px;
+}

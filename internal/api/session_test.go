@@ -31,20 +31,31 @@ type noopEnforcer struct{}
 func (noopEnforcer) Set(enforce.Effective) {}
 
 func sessionServer(t *testing.T) (http.Handler, *testClock) {
+	h, c, _ := sessionServerReopenable(t)
+	return h, c
+}
+
+// sessionServerReopenable also returns a function that stands up a second daemon
+// against the same store, which is how "survives a restart" gets tested.
+func sessionServerReopenable(t *testing.T) (http.Handler, *testClock, func() http.Handler) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-
 	c := &testClock{wall: time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC), mono: time.Hour}
-	mgr := session.NewManager(st, c, noopEnforcer{}, blocklist.Presets(), []string{"preset.adult"})
-	if err := mgr.Load(); err != nil {
-		t.Fatal(err)
+
+	open := func() http.Handler {
+		st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+
+		mgr := session.NewManager(st, c, noopEnforcer{}, blocklist.Presets(), []string{"preset.adult"})
+		if err := mgr.Load(); err != nil {
+			t.Fatal(err)
+		}
+		return New(st, "secret", true, fakeEnforcement{}, mgr).Handler()
 	}
-	return New(st, "secret", true, fakeEnforcement{}, mgr).Handler(), c
+	return open(), c, open
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {
