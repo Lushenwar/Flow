@@ -52,10 +52,21 @@ The watchdog is the SCM's own recovery configuration (3 restarts, 60s reset wind
 loop of our own. It does not fire on a deliberate SCM stop, which is exactly the required semantics
 with no code to get wrong.
 
-**Unverified:** every layer that needs elevation (WFP filters, resolver pin, `hosts` writes) has been
-built and compile-checked but never run elevated. The browser-level exit criterion — `youtube.com`
-failing in Chrome, Firefox and Edge — is still outstanding. What *is* verified: an unelevated run
-degrades safely, reports each failure per layer in `/api/health`, and leaves system DNS untouched.
+**Verified elevated (2026-08-05).** All four layers report `active`. `youtube.com`, `www.youtube.com`
+and `googlevideo.com` sink to 127.0.0.1 via `hosts`; `m.youtube.com` NXDOMAINs via the sink's suffix
+match, which is the layering doing exactly what it was split up to do. `cdc.gov`, `988lifeline.org`,
+`go.dev` and `wikipedia.org` all still resolve. `1.1.1.1:443` and `8.8.8.8:443` are refused while
+`wikipedia.org:443` stays open. Deleting the `hosts` block by hand restores it within 6s with a
+`reconcile_repaired` event. Service installs as `LocalSystem`, `Automatic`, with SCM recovery
+actions 5s/15s/30s over a 60s window; `Stop-Process` on the service PID brings back a new one.
+Uninstall leaves no service, no data dir, no `hosts` block, and the original resolvers restored.
+
+**Still unverified:** real browsers (only the resolver and TCP layers were exercised), and reboot
+survival of a locked session.
+
+**Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
+is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
+does not stop it. Closing this needs the DoH bootstrap *hostnames* NXDOMAINed at the sink.
 Update this as you finish each step.
 
 **Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
