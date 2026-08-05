@@ -47,6 +47,11 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/session/escape", s.escape)
 		mux.HandleFunc("POST /api/session/release", s.release)
 		mux.HandleFunc("POST /api/session/ack", s.ack)
+
+		mux.HandleFunc("GET /api/baseline", s.baselineList)
+		mux.HandleFunc("POST /api/baseline/{id}/enable", s.baselineEnable)
+		mux.HandleFunc("POST /api/baseline/{id}/disable", s.baselineDisable)
+		mux.HandleFunc("DELETE /api/baseline/{id}/disable", s.baselineCancelDisable)
 	}
 	return s.auth(mux)
 }

@@ -16,6 +16,8 @@ import (
 const (
 	// storeKey holds the signed session row.
 	storeKey = "session"
+	// baselineKey holds the signed baseline row.
+	baselineKey = "baseline"
 	// tickEvery drives state transitions. Sub-second precision is pointless for
 	// a 25-minute lock.
 	tickEvery = time.Second
@@ -35,11 +37,11 @@ type Manager struct {
 	enf      Enforcement
 	cat      blocklist.Catalog
 	sess     Session
-	baseline []string
+	baseline *Baseline
 }
 
 func NewManager(st *store.Store, c Clock, enf Enforcement, cat blocklist.Catalog, baseline []string) *Manager {
-	return &Manager{st: st, clock: c, enf: enf, cat: cat, sess: New(), baseline: baseline}
+	return &Manager{st: st, clock: c, enf: enf, cat: cat, sess: New(), baseline: NewBaseline(baseline)}
 }
 
 // Load restores the session from disk and folds in any reboot that happened
@@ -49,12 +51,15 @@ func (m *Manager) Load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.loadBaselineLocked()
+
 	raw, err := m.st.Get(storeKey)
 	if err != nil {
 		if err == store.ErrTampered {
 			m.event("session_signature_invalid", "{}")
 			log.Printf("session row failed its signature; starting idle")
 		}
+		m.tickBaselineLocked()
 		m.applyLocked()
 		return nil // no row yet is the normal first-run case
 	}
@@ -77,6 +82,7 @@ func (m *Manager) Load() error {
 		}
 	}
 	m.tickLocked()
+	m.tickBaselineLocked()
 	m.applyLocked()
 	return m.persistLocked()
 }
@@ -98,7 +104,9 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		case <-tick.C:
 			m.mu.Lock()
-			if m.tickLocked() {
+			sessionMoved := m.tickLocked()
+			baselineMoved := m.tickBaselineLocked()
+			if sessionMoved || baselineMoved {
 				m.applyLocked()
 				m.persistLocked()
 			}
@@ -176,6 +184,13 @@ func (m *Manager) tickLocked() bool {
 }
 
 func (m *Manager) checkpointLocked() {
+	// Pending baseline disables checkpoint whether or not a session is running:
+	// their countdown must survive a reboot too.
+	for _, id := range m.baseline.IDs() {
+		if r := m.baseline.Rules[id]; r.Pending.Requested {
+			r.Pending.Deadline.Anchor = r.Pending.Deadline.Anchor.Checkpoint(m.clock)
+		}
+	}
 	if !m.sess.Active() {
 		return
 	}
@@ -208,7 +223,7 @@ func (m *Manager) checkDriftLocked() {
 // session, never an override.
 func (m *Manager) applyLocked() {
 	var rules []enforce.Rule
-	for _, id := range m.baseline {
+	for _, id := range m.baseline.EnabledIDs() {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Baseline})
 	}
 	if m.sess.Active() {
@@ -225,7 +240,7 @@ func (m *Manager) Effective() enforce.Effective {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var rules []enforce.Rule
-	for _, id := range m.baseline {
+	for _, id := range m.baseline.EnabledIDs() {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Baseline})
 	}
 	if m.sess.Active() {
@@ -236,14 +251,114 @@ func (m *Manager) Effective() enforce.Effective {
 	return enforce.Union(m.cat, rules)
 }
 
-func (m *Manager) Baseline() []string { return m.baseline }
+// Baseline returns a snapshot of the rules, ticked so a fired disable is never
+// reported as still pending.
+func (m *Manager) Baseline() []BaselineRule {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickBaselineLocked()
+
+	out := make([]BaselineRule, 0, len(m.baseline.Rules))
+	for _, id := range m.baseline.IDs() {
+		out = append(out, *m.baseline.Rules[id])
+	}
+	return out
+}
+
+// EnableBaseline is immediate and always allowed.
+func (m *Manager) EnableBaseline(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.baseline.Enable(id)
+	m.event("baseline_enabled", fmt.Sprintf(`{"id":%q}`, id))
+	m.applyLocked()
+	return m.persistLocked()
+}
+
+// DisableBaseline starts the 15-minute delay. The rule stays enforced throughout.
+func (m *Manager) DisableBaseline(id string) (*time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if err := m.baseline.Disable(m.clock, id, m.sess.Active()); err != nil {
+		return nil, err
+	}
+	m.event("baseline_disable_requested", fmt.Sprintf(`{"id":%q}`, id))
+	if err := m.persistLocked(); err != nil {
+		return nil, err
+	}
+	r, ok := m.baseline.Rules[id]
+	if !ok {
+		return nil, nil
+	}
+	return r.Pending.AvailableAt(m.clock, nil), nil
+}
+
+// CancelBaselineDisable is instant and free.
+func (m *Manager) CancelBaselineDisable(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.baseline.CancelDisable(id)
+	m.event("baseline_disable_cancelled", fmt.Sprintf(`{"id":%q}`, id))
+	return m.persistLocked()
+}
+
+func (m *Manager) tickBaselineLocked() bool {
+	fired := m.baseline.Tick(m.clock, nil)
+	for _, id := range fired {
+		m.event("baseline_disabled", fmt.Sprintf(`{"id":%q}`, id))
+	}
+	return len(fired) > 0
+}
 
 func (m *Manager) persistLocked() error {
 	b, err := json.Marshal(m.sess)
 	if err != nil {
 		return err
 	}
-	return m.st.Put(storeKey, string(b))
+	if err := m.st.Put(storeKey, string(b)); err != nil {
+		return err
+	}
+	bl, err := json.Marshal(m.baseline)
+	if err != nil {
+		return err
+	}
+	return m.st.Put(baselineKey, string(bl))
+}
+
+// loadBaselineLocked restores the rules, preserving the pending-disable
+// countdowns across a restart. The countdown surviving is the point: a
+// disable request that resets when you close the app is not friction.
+func (m *Manager) loadBaselineLocked() {
+	raw, err := m.st.Get(baselineKey)
+	if err != nil {
+		if err == store.ErrTampered {
+			m.event("baseline_signature_invalid", "{}")
+			log.Printf("baseline row failed its signature; keeping the startup defaults")
+		}
+		return // no row yet: the -block defaults stand
+	}
+	var b Baseline
+	if err := json.Unmarshal([]byte(raw), &b); err != nil || b.Rules == nil {
+		log.Printf("baseline row unreadable; keeping the startup defaults")
+		return
+	}
+	// Anything named at startup but absent from the row is added, so a new
+	// preset in -block shows up rather than silently doing nothing.
+	for id, r := range m.baseline.Rules {
+		if _, ok := b.Rules[id]; !ok {
+			b.Rules[id] = r
+		}
+	}
+	m.baseline = &b
+
+	for _, id := range m.baseline.IDs() {
+		r := m.baseline.Rules[id]
+		if r.Pending.Requested {
+			r.Pending.Deadline.Anchor, _ = r.Pending.Deadline.Anchor.Recover(m.clock)
+		}
+	}
 }
 
 func (m *Manager) event(kind, data string) {
