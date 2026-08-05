@@ -17,7 +17,7 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ║  MAST BUILD PROGRESS                      6/8 DONE ║
 ║  ██████████████████████░░░░░░  PHASE 5 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
-║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
+║  Phase 1: Enforcement Core & Reconciliation      [~   ]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [DONE]  ║
 ║  Phase 4: Focus Screen — the Dial & Grace Window [DONE]  ║
@@ -61,8 +61,15 @@ match, which is the layering doing exactly what it was split up to do. `cdc.gov`
 actions 5s/15s/30s over a 60s window; `Stop-Process` on the service PID brings back a new one.
 Uninstall leaves no service, no data dir, no `hosts` block, and the original resolvers restored.
 
-**Still unverified:** real browsers (only the resolver and TCP layers were exercised), and reboot
-survival of a locked session.
+**Verified in Chrome (2026-08-05).** With `preset.video` and `preset.doomscroll` enforced:
+`reddit.com` and `music.youtube.com` fail immediately; `wikipedia.org` and `cdc.gov` load normally;
+`youtube.com` works again the moment the daemon is torn down.
+
+**Phase 1 is reopened to `[~]` by that run.** Its exit criterion says "an already-open stream is
+terminated on rule application", and it is not: a YouTube tab open before enforcement started kept
+serving for about two minutes. See Correction 1. Everything else in Phase 1 passes.
+
+**Still unverified:** Firefox and Edge, and reboot survival of a locked session.
 
 **Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
 is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
@@ -176,9 +183,20 @@ that either doesn't work or shouldn't ship.
    nothing else. DNS-over-HTTPS (default in Firefox, rolling out in Chrome), raw IPs, VPNs, and a
    second browser profile all route around it. Enforcement lives in **WFP filters** (user-mode
    `fwpuclnt.dll`, no kernel driver, via `github.com/tailscale/wf`) plus a **local DNS sink**, with
-   `hosts` as a secondary layer only. WFP additionally triggers ALE reauthorization on rule change,
-   which forcibly terminates *already-open* connections — so committing to a session kills a
-   mid-stream YouTube tab instead of letting it play out. `hosts` cannot do that.
+   `hosts` as a secondary layer only.
+
+   ~~WFP additionally triggers ALE reauthorization on rule change, which forcibly terminates
+   *already-open* connections — so committing to a session kills a mid-stream YouTube tab instead of
+   letting it play out.~~ **This does not happen, and cannot with the design we chose.** ALE
+   reauthorization only terminates connections that *match a filter*, and our filters match DNS
+   (ports 53/853, DoH endpoints), never the blocked sites themselves — because per-domain IP blocking
+   was rejected for shared CDN addresses. Measured in Chrome on 2026-08-05: a YouTube tab open before
+   the daemon started kept serving for roughly two minutes, until Chrome's own host cache expired and
+   it needed a fresh resolve. Cold domains (`reddit.com`, `music.youtube.com`) failed immediately.
+
+   **This is the biggest gap between the thesis and the build.** The product is for the moment of
+   craving, and at that moment the tab is already open. Closing it means blocking resolved IPs, with
+   the shared-CDN damage that implies, or a browser extension that can close tabs (Phase 7).
 
 2. **Monotonic clocks do not survive reboot.** `QueryPerformanceCounter` resets when the machine
    does, so it cannot carry a 2-hour lock across a restart alone. See TIME AUTHORITY.
@@ -216,6 +234,7 @@ machine they administer. Every hour spent fighting them is an hour not spent on 
 | 6 | Move the system clock forward | Slowest-credible-source rule | Yes |
 | 7 | Edit the session blocklist mid-session | Not editable from the dial; weakening rejected | Yes |
 | 8 | Different browser / incognito | Enforcement is at the network layer | Yes |
+| 8b | **Keep using the tab that was already open** | None — DNS enforcement does not touch live connections | **No** (~1–2 min) |
 | 9 | DNS-over-HTTPS to a public resolver | WFP filters on known DoH endpoints | Partly |
 | 10 | Uninstall from an elevated prompt | **Intentionally allowed** | No, by design |
 | 11 | VPN, phone, second machine, Safe Mode | Not defended | No |
@@ -703,6 +722,11 @@ traps will be the person writing it.
 * No history charts. Every number is an instantaneous read; sessions are a flat event log.
 * HMAC key is DPAPI-wrapped to the machine, not a hardware root. TPM sealing would raise the bar and
   also brick sessions on hardware change. Not yet.
+* **A tab that is already open survives the commit.** DNS-layer enforcement only bites when something
+  needs to resolve a name, so an established connection plus a warm browser DNS cache buys roughly
+  one to two minutes of the thing you just committed to avoid. Measured in Chrome. This is the most
+  consequential gap in the product, because the moment of craving is exactly when the tab is already
+  open. Not fixable without IP blocking or the Phase 7 extension.
 * **WFP does DNS containment, not per-domain IP blocking.** Resolving blocked domains to addresses
   and filtering those was considered and rejected: CDN addresses are shared, so blocking one takes
   out unrelated sites, and they rotate faster than a 3s reconcile. A user who types a raw IP, or
