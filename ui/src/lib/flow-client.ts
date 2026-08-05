@@ -1,4 +1,10 @@
-import type { AppState, BaselineRow, EventRow } from "./state";
+import type {
+  AppState,
+  BankView,
+  BaselineRow,
+  EventRow,
+  ScheduleRow,
+} from "./state";
 
 /**
  * The daemon owns all authority; this client owns zero. Every call is a request
@@ -71,6 +77,20 @@ export const api = {
   ack: () => call("/api/session/ack", { method: "POST" }),
 
   events: (since = 0) => call<EventRow[]>(`/api/events?since=${since}`),
+
+  bank: () => call<BankView>("/api/bank"),
+  spend: (minutes: number) =>
+    call<BankView>("/api/bank/spend", {
+      method: "POST",
+      body: JSON.stringify({ minutes }),
+    }),
+
+  schedules: () => call<ScheduleRow[]>("/api/schedules"),
+  putSchedule: (s: Partial<ScheduleRow>) =>
+    call<ScheduleRow[]>("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify(s),
+    }),
 
   baseline: () => call<BaselineRow[]>("/api/baseline"),
   enable: (id: string) =>

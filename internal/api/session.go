@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Lushenwar/Flow/internal/enforce"
+	"github.com/Lushenwar/Flow/internal/schedule"
 	"github.com/Lushenwar/Flow/internal/session"
 )
 
@@ -19,6 +20,10 @@ type Sessions interface {
 	EnableBaseline(id string) error
 	DisableBaseline(id string) (*time.Time, error)
 	CancelBaselineDisable(id string) error
+	Bank() (balance, remaining time.Duration, spending bool)
+	SpendBank(d time.Duration) error
+	Schedules() ([]schedule.Schedule, []string)
+	PutSchedule(s schedule.Schedule) error
 	Commit(mode session.Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)

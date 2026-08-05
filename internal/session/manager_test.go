@@ -7,6 +7,7 @@ import (
 
 	"github.com/Lushenwar/Flow/internal/blocklist"
 	"github.com/Lushenwar/Flow/internal/enforce"
+	"github.com/Lushenwar/Flow/internal/schedule"
 	"github.com/Lushenwar/Flow/internal/store"
 )
 
@@ -196,6 +197,93 @@ func TestDriftIsLoggedAndPenaltyCapped(t *testing.T) {
 	m.mu.Unlock()
 	if m.Snapshot().Target.Duration != before {
 		t.Fatal("penalty stacked — it is capped at once per session")
+	}
+}
+
+// The exit criterion: a schedule auto-arms even if the UI was never opened. No
+// API call drives this — the daemon's own tick applies it.
+func TestScheduleAutoArmsWithoutTheUI(t *testing.T) {
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC) // midday, outside the window
+	m, rec := newManager(t, c, t.TempDir())
+
+	del, err := schedule.New("sched.delivery", "Delivery", []string{"preset.delivery"}, "18:00", "21:00", time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PutSchedule(del); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec.last.Domains["ubereats.com"]; ok {
+		t.Fatal("midday is outside the window")
+	}
+
+	// 19:00 arrives. Nothing calls the API.
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+	m.mu.Lock()
+	m.applyLocked()
+	m.mu.Unlock()
+
+	if _, ok := rec.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("the schedule must arm itself")
+	}
+	if got := rec.last.Domains["ubereats.com"]; got != enforce.Schedule {
+		t.Fatalf("attributed to %q, want schedule", got)
+	}
+
+	// And lifts on its own at 21:00.
+	c.wall = time.Date(2026, 8, 4, 21, 30, 0, 0, time.UTC)
+	m.mu.Lock()
+	m.applyLocked()
+	m.mu.Unlock()
+	if _, ok := rec.last.Domains["ubereats.com"]; ok {
+		t.Fatal("the window closed; the rule should lift")
+	}
+	// Baseline is untouched throughout.
+	if _, ok := rec.last.Domains["pornhub.com"]; !ok {
+		t.Fatal("baseline must survive a schedule closing")
+	}
+}
+
+func TestScheduleSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+
+	m, _ := newManager(t, c, dir)
+	del, _ := schedule.New("sched.delivery", "Delivery", []string{"preset.delivery"}, "18:00", "21:00", time.UTC)
+	m.PutSchedule(del)
+
+	m2, rec2 := newManager(t, c, dir)
+	if _, ok := rec2.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("a restarted daemon must re-apply an active schedule")
+	}
+	all, active := m2.Schedules()
+	if len(all) == 0 || len(active) != 1 {
+		t.Fatalf("schedules %d, active %d", len(all), len(active))
+	}
+}
+
+// Credit happens in the same signed write as the transition, so a crash between
+// them cannot double-pay.
+func TestCreditIsWrittenWithTheTransition(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+
+	m, _ := newManager(t, c, dir)
+	m.Commit(ModeCommitment, 50*time.Minute, nil, DefaultGrace, false)
+	c.tick(DefaultGrace + 50*time.Minute)
+	m.Snapshot() // drives the transition into COMPLETE and the credit
+
+	balance, _, _ := m.Bank()
+	if balance != 10*time.Minute {
+		t.Fatalf("balance %v, want 10m", balance)
+	}
+
+	m2, _ := newManager(t, c, dir)
+	balance2, _, _ := m2.Bank()
+	if balance2 != 10*time.Minute {
+		t.Fatalf("balance %v after restart, want 10m — not re-credited, not lost", balance2)
 	}
 }
 
