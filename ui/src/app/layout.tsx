@@ -3,7 +3,7 @@ import { Tabs } from "@/components/Tabs";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mast",
+  title: "Flow",
   description: "Commitment blocker and focus timer",
 };
 

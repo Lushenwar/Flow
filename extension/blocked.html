@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Blocked</title>
+    <style>
+      :root {
+        --bg: #f6f6f7;
+        --surface: #fff;
+        --hairline: rgba(0, 0, 0, 0.12);
+        --text: #18181b;
+        --text-secondary: #52525b;
+        --text-muted: #8b8b93;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111113;
+          --surface: #1a1a1d;
+          --hairline: rgba(255, 255, 255, 0.14);
+          --text: #ededf0;
+          --text-secondary: #a1a1aa;
+          --text-muted: #71717a;
+        }
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .card {
+        background: var(--surface);
+        border: 0.5px solid var(--hairline);
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 360px;
+      }
+      h1 { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+      p { font-size: 12px; color: var(--text-secondary); margin: 0 0 8px; line-height: 1.5; }
+      .muted { font-size: 11px; color: var(--text-muted); }
+      code {
+        font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+        font-size: 11px;
+        color: var(--text-muted);
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Non-judgmental, same as the rest of the app. "Blocked", not "You shouldn't
+      be here". The friction is the delay, never the shaming.
+    -->
+    <div class="card">
+      <h1>Blocked</h1>
+      <p>Flow is enforcing this right now. It lifts when the session ends, or when you turn the category off — which takes 15 minutes.</p>
+      <p class="muted">Category: <span id="reason">—</span></p>
+      <p class="muted"><code id="from"></code></p>
+    </div>
+    <script src="blocked.js"></script>
+  </body>
+</html>

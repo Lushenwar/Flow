@@ -20,7 +20,7 @@ var protected = map[string]bool{
 	"trustedinstaller.exe": true, "tiworker.exe": true,
 	// Ourselves. Killing the daemon from its own process rules would be a
 	// creative way to build an off switch.
-	"mastd.exe": true, "mastctl.exe": true,
+	"flowd.exe": true, "flowctl.exe": true,
 }
 
 // shouldTerminate decides whether a running process matches a process rule.

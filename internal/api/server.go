@@ -54,7 +54,18 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/baseline/{id}/disable", s.baselineDisable)
 		mux.HandleFunc("DELETE /api/baseline/{id}/disable", s.baselineCancelDisable)
 	}
-	return s.auth(mux)
+
+	// /api/rules sits outside the token check. See the comment on rules() — the
+	// extension cannot read the token file, and the endpoint grants no authority.
+	outer := http.NewServeMux()
+	outer.Handle("/", s.auth(mux))
+	if s.sess != nil {
+		outer.HandleFunc("GET /api/rules", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			s.rules(w, r)
+		})
+	}
+	return outer
 }
 
 // auth rejects anything without the exact bearer token, in constant time.
@@ -83,7 +94,7 @@ type health struct {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	h := health{
 		Status:    "ok",
-		App:       "mast",
+		App:       "flow",
 		Dev:       s.dev,
 		UptimeSec: int64(time.Since(s.started).Seconds()),
 		Signature: "ok",

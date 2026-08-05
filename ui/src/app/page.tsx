@@ -6,7 +6,7 @@ import { CommitDialog } from "@/components/CommitDialog";
 import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
 import { EscapeDialog } from "@/components/EscapeDialog";
-import { api } from "@/lib/mast-client";
+import { api } from "@/lib/flow-client";
 import {
   arcFraction,
   baselineOnCount,

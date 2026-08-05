@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./mast-client";
+import { api } from "./flow-client";
 import type { AppState } from "./state";
 
 /**

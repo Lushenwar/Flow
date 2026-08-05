@@ -7,8 +7,8 @@ import type { AppState, BaselineRow, EventRow } from "./state";
  */
 
 const BASE =
-  process.env.NEXT_PUBLIC_MAST_URL ?? "http://127.0.0.1:8787";
-const TOKEN = process.env.NEXT_PUBLIC_MAST_TOKEN ?? "";
+  process.env.NEXT_PUBLIC_FLOW_URL ?? "http://127.0.0.1:8787";
+const TOKEN = process.env.NEXT_PUBLIC_FLOW_TOKEN ?? "";
 
 export class ApiError extends Error {
   constructor(

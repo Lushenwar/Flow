@@ -126,7 +126,7 @@ func (s *Store) Events(since int64) ([]Event, error) {
 }
 
 // Verify walks every signed row and returns a description of each bad one.
-// This is what `mastctl verify` reports and what /api/health summarises.
+// This is what `flowctl verify` reports and what /api/health summarises.
 func (s *Store) Verify() ([]string, error) {
 	var bad []string
 

@@ -18,8 +18,8 @@ import (
 type Hosts struct{ Path string }
 
 const (
-	hostsBegin = "# BEGIN MAST — managed block, edits are reverted automatically"
-	hostsEnd   = "# END MAST"
+	hostsBegin = "# BEGIN FLOW — managed block, edits are reverted automatically"
+	hostsEnd   = "# END FLOW"
 )
 
 func NewHosts() *Hosts { return &Hosts{Path: defaultHostsPath()} }
@@ -124,7 +124,7 @@ func replaceBlock(cur, want string) string {
 // in-place write.
 //
 // Observed on the first elevated run: the very first apply failed with
-// "rename hosts.mast.tmp hosts: Access is denied", and the identical write
+// "rename hosts.flow.tmp hosts: Access is denied", and the identical write
 // succeeded on the next reconcile tick 3 seconds later. Windows guards the hosts
 // file, and the denial is intermittent rather than absolute. Retrying inline
 // makes the first apply land instead of leaving a hole until reconcile notices.
@@ -145,7 +145,7 @@ func writeHosts(path string, data []byte) error {
 }
 
 func replaceViaTemp(path string, data []byte) error {
-	tmp := path + ".mast.tmp"
+	tmp := path + ".flow.tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func replaceViaTemp(path string, data []byte) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Never leave a stray hosts.mast.tmp in %SystemRoot%\System32\drivers\etc.
+	// Never leave a stray hosts.flow.tmp in %SystemRoot%\System32\drivers\etc.
 	os.Remove(tmp)
 	return err
 }

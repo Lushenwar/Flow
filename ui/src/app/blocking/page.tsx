@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { History } from "@/components/History";
-import { ApiError, api } from "@/lib/mast-client";
+import { ApiError, api } from "@/lib/flow-client";
 import { sessionOwnedIds } from "@/lib/state";
 import { useNow, usePoll } from "@/lib/use-poll";
 

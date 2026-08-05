@@ -8,12 +8,12 @@ import (
 
 // AppName is the codename decision CLAUDE.md required before Phase 0 ships.
 // It is baked into the service name, the install path, and the binary names.
-const AppName = "Mast"
+const AppName = "Flow"
 
-// Dir is where all persistent state lives: %ProgramData%\Mast on Windows.
-// MAST_DATA_DIR overrides it, which is how tests get an isolated store.
+// Dir is where all persistent state lives: %ProgramData%\Flow on Windows.
+// FLOW_DATA_DIR overrides it, which is how tests get an isolated store.
 func Dir() string {
-	if d := os.Getenv("MAST_DATA_DIR"); d != "" {
+	if d := os.Getenv("FLOW_DATA_DIR"); d != "" {
 		return d
 	}
 	base := os.Getenv("ProgramData")
