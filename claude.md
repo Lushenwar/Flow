@@ -14,22 +14,26 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      4/8 DONE ║
-║  ██████████████░░░░░░░░░░░░░░  PHASE 3 COMPLETE          ║
+║  MAST BUILD PROGRESS                      5/8 DONE ║
+║  ██████████████████░░░░░░░░░░  PHASE 4 COMPLETE          ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [DONE]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
 ║  Phase 3: UI Shell + Blocking Screen (baseline)  [DONE]  ║
-║  Phase 4: Focus Screen — the Dial & Grace Window [    ]  ║
+║  Phase 4: Focus Screen — the Dial & Grace Window [DONE]  ║
 ║  Phase 5: Escape Hatches & Tamper Event Log      [    ]  ║
 ║  Phase 6: Time Bank & Scheduled Hard-Locks       [    ]  ║
 ║  Phase 7: Browser Extension & Installer          [    ]  ║
 ╚══════════════════════════════════════════════════════════╝
 
-Phase: 4 (next).
-Status: Both halves exist. Baseline rules are mutable with the asymmetric friction (instant on,
-15-minute off), the two-tab shell and Blocking screen are built, and the Focus screen is a text-only
-placeholder until the dial lands.
+Phase: 5 (next).
+Status: Both screens are built. The dial commits, sweeps a 15-second arming ring with a working
+second-tap abort, and goes inert once locked. Baseline rules carry the asymmetric friction (instant
+on, 15-minute off).
+
+`GET /api/state` ships `durationSeconds` and `graceSeconds` alongside the remaining counts. Without
+the denominators the UI would have to remember what it asked for, and a reopened window would draw
+the wrong ring.
 
 **Deviation from the file layout above:** baseline rules live in `internal/session/baseline.go`, not
 `internal/baseline/`. They consume `Delay`, `Delay` consumes `Clock`, and a separate package would

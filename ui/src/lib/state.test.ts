@@ -3,10 +3,13 @@ import {
   AppState,
   BaselineRow,
   SessionView,
+  arcFraction,
   baselineOnCount,
   dashArray,
+  dialAction,
   dialText,
   formatCountdown,
+  liveRemainingSeconds,
   pendingLabel,
   progressFraction,
   rowState,
@@ -20,9 +23,11 @@ const session = (over: Partial<SessionView> = {}): SessionView => ({
   targetAt: null,
   remainingSeconds: 0,
   canRelease: false,
-  graceRemainingSeconds: 0,
   blocklistIds: [],
   escape: { requested: false, availableAt: null },
+  durationSeconds: 0,
+  graceRemainingSeconds: 0,
+  graceSeconds: 0,
   ...over,
 });
 
@@ -159,6 +164,81 @@ describe("dialText", () => {
     const t = dialText(session({ state: "COMPLETE" }), 2, 25);
     expect(t.status).toBe("done");
     expect(t.countdown).toBe("00:00");
+  });
+});
+
+describe("arcFraction", () => {
+  it("is empty in IDLE and full in COMPLETE", () => {
+    expect(arcFraction(session())).toBe(0);
+    expect(arcFraction(session({ state: "COMPLETE" }))).toBe(1);
+  });
+
+  it("sweeps the grace window in ARMING, not the session", () => {
+    // 15s grace, 3s gone. If it swept the 25-minute session instead, the ring
+    // would look motionless during the one window the user can still back out of.
+    const s = session({
+      state: "ARMING",
+      graceSeconds: 15,
+      graceRemainingSeconds: 12,
+      durationSeconds: 1500,
+      remainingSeconds: 1497,
+    });
+    expect(arcFraction(s)).toBeCloseTo(0.2);
+  });
+
+  it("sweeps the session in FOCUS", () => {
+    const s = session({ state: "FOCUS", durationSeconds: 1500, remainingSeconds: 375 });
+    expect(arcFraction(s)).toBeCloseTo(0.75);
+  });
+
+  it("keeps sweeping the session while releasing", () => {
+    const s = session({ state: "RELEASING", durationSeconds: 1000, remainingSeconds: 500 });
+    expect(arcFraction(s)).toBeCloseTo(0.5);
+  });
+
+  it("survives a zero denominator", () => {
+    expect(arcFraction(session({ state: "FOCUS" }))).toBe(0);
+  });
+});
+
+describe("dialAction", () => {
+  it("commits from IDLE and COMPLETE", () => {
+    expect(dialAction(session())).toBe("commit");
+    expect(dialAction(session({ state: "COMPLETE" }))).toBe("commit");
+  });
+
+  it("aborts in ARMING", () => {
+    expect(dialAction(session({ state: "ARMING" }))).toBe("abort");
+  });
+
+  it("is inert once locked", () => {
+    // There is no stop verb, so there is no control to render.
+    expect(dialAction(session({ state: "FOCUS" }))).toBe("none");
+    expect(dialAction(session({ state: "RELEASING" }))).toBe("none");
+  });
+});
+
+describe("liveRemainingSeconds", () => {
+  const now = Date.parse("2026-08-04T12:00:00Z");
+
+  it("derives from targetAt, not from the polled number", () => {
+    // The daemon polls once a second; the countdown ticks smoothly between polls
+    // because it is recomputed from an absolute instant, never accumulated.
+    const s = session({
+      state: "FOCUS",
+      targetAt: "2026-08-04T12:10:00Z",
+      remainingSeconds: 999,
+    });
+    expect(liveRemainingSeconds(s, now)).toBe(600);
+  });
+
+  it("falls back to the polled number when there is no target", () => {
+    expect(liveRemainingSeconds(session({ remainingSeconds: 42 }), now)).toBe(42);
+  });
+
+  it("floors at zero past the target", () => {
+    const s = session({ state: "FOCUS", targetAt: "2026-08-04T11:59:00Z" });
+    expect(liveRemainingSeconds(s, now)).toBe(0);
   });
 });
 

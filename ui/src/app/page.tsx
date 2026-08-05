@@ -1,41 +1,121 @@
 "use client";
 
-import { baselineOnCount, dialText } from "@/lib/state";
-import { usePoll } from "@/lib/use-poll";
+import { Lock } from "lucide-react";
+import { useState } from "react";
+import { CommitDialog } from "@/components/CommitDialog";
+import { Dial } from "@/components/Dial";
+import { DURATIONS, DurationChips } from "@/components/DurationChips";
+import { api } from "@/lib/mast-client";
+import {
+  arcFraction,
+  baselineOnCount,
+  dialAction,
+  dialText,
+  listName,
+} from "@/lib/state";
+import { useNow, usePoll } from "@/lib/use-poll";
 
-/**
- * Focus screen. Phase 4 replaces this with the dial; until then it renders the
- * same derived text the dial will, so the daemon wiring is exercised now and the
- * only thing Phase 4 adds is geometry.
- */
+/** What a session covers by default. Editing lives in settings, not here. */
+const SESSION_LISTS = ["preset.video", "preset.doomscroll", "preset.gaming"];
+const ESCAPE_MINUTES = 15;
+
 export default function FocusScreen() {
-  const { state } = usePoll();
+  const { state, refresh } = usePoll();
+  const now = useNow();
+  const [minutes, setMinutes] = useState<number>(DURATIONS[1]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   if (!state) {
     return <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Loading…</p>;
   }
 
-  const text = dialText(state.session, baselineOnCount(state.baseline), 50);
+  const session = state.session;
+  const action = dialAction(session);
+  const text = dialText(session, baselineOnCount(state.baseline), minutes, now);
+
+  async function tap() {
+    if (action === "commit") {
+      setDialogOpen(true);
+      return;
+    }
+    if (action === "abort") {
+      // Free and instant, and only possible in ARMING. The daemon is the one
+      // that decides that; a 409 here just means the window closed.
+      setBusy(true);
+      try {
+        await api.abort();
+      } finally {
+        setBusy(false);
+        refresh();
+      }
+    }
+    // FOCUS and RELEASING: no action, no control to render.
+  }
+
+  async function commit(acceptTamperPenalty: boolean) {
+    setDialogOpen(false);
+    setBusy(true);
+    try {
+      await api.commit({
+        mode: "commitment",
+        durationMinutes: minutes,
+        blocklistIds: SESSION_LISTS,
+        acceptTamperPenalty,
+      });
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }
+
+  const covers = session.blocklistIds.length > 0 ? session.blocklistIds : SESSION_LISTS;
 
   return (
-    <div className="flex flex-col items-center gap-1 py-8">
-      <span className="tabular text-[30px]">{text.countdown}</span>
-      <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-        {text.status}
-      </span>
-      {text.hint && (
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          {text.hint}
-        </span>
-      )}
-      {text.coverage && (
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          {text.coverage}
-        </span>
-      )}
-      <p className="text-[11px] mt-6" style={{ color: "var(--text-muted)" }}>
-        The dial arrives in Phase 4.
+    <div className="flex flex-col items-center">
+      <Dial
+        text={text}
+        fraction={arcFraction(session)}
+        action={busy ? "none" : action}
+        neutral={session.state === "COMPLETE"}
+        onTap={tap}
+      />
+
+      <div className="mt-5">
+        <DurationChips
+          minutes={minutes}
+          disabled={action !== "commit" || busy}
+          onPick={setMinutes}
+        />
+      </div>
+
+      {/* Read-only. Choosing a session's blocklist here would be a bypass: a
+          user mid-craving would deselect YouTube and commit to nothing. */}
+      <p
+        className="text-[11px] mt-4 text-center"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Covers {covers.map(listName).join(", ").toLowerCase()}
       </p>
+
+      {/* The consequence sits directly under the control that causes it. */}
+      <div
+        className="w-full mt-5 pt-3 flex items-center justify-center gap-[6px] text-[12px]"
+        style={{ borderTop: "0.5px solid var(--hairline)", color: "var(--text-muted)" }}
+      >
+        <Lock size={12} />
+        no off switch until 0:00
+      </div>
+
+      {dialogOpen && (
+        <CommitDialog
+          minutes={minutes}
+          blocklistIds={SESSION_LISTS}
+          escapeMinutes={ESCAPE_MINUTES}
+          onCancel={() => setDialogOpen(false)}
+          onConfirm={commit}
+        />
+      )}
     </div>
   );
 }

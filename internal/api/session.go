@@ -34,14 +34,20 @@ type stateResponse struct {
 }
 
 type sessionView struct {
-	State                 session.State `json:"state"`
-	Mode                  session.Mode  `json:"mode"`
-	TargetAt              *time.Time    `json:"targetAt"`
-	RemainingSeconds      int           `json:"remainingSeconds"`
-	CanRelease            bool          `json:"canRelease"`
-	GraceRemainingSeconds int           `json:"graceRemainingSeconds"`
-	BlocklistIDs          []string      `json:"blocklistIds"`
-	Escape                escapeView    `json:"escape"`
+	State            session.State `json:"state"`
+	Mode             session.Mode  `json:"mode"`
+	TargetAt         *time.Time    `json:"targetAt"`
+	RemainingSeconds int           `json:"remainingSeconds"`
+	CanRelease       bool          `json:"canRelease"`
+	BlocklistIDs     []string      `json:"blocklistIds"`
+	Escape           escapeView    `json:"escape"`
+
+	// The totals are the denominators for the dial's arc. Without them the UI
+	// would have to remember what it asked for, and a restarted window would
+	// draw the wrong ring.
+	DurationSeconds       int `json:"durationSeconds"`
+	GraceRemainingSeconds int `json:"graceRemainingSeconds"`
+	GraceSeconds          int `json:"graceSeconds"`
 }
 
 type escapeView struct {
@@ -83,6 +89,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		at := sess.Target.TargetAt(c, nil)
 		view.TargetAt = &at
 		view.RemainingSeconds = int(remaining.Seconds())
+		view.DurationSeconds = int(sess.Target.Duration.Seconds())
+		view.GraceSeconds = int(sess.Grace.Duration.Seconds())
 	}
 	if sess.State == session.Arming {
 		view.GraceRemainingSeconds = int(sess.Grace.Remaining(c, nil).Seconds())
