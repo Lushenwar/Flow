@@ -1,4 +1,4 @@
-// Command mastd is the Mast daemon: a Windows Service under LocalSystem that owns
+// Command flowd is the Flow daemon: a Windows Service under LocalSystem that owns
 // all enforcement authority. It runs as a console app with -dev for development.
 package main
 
@@ -13,11 +13,11 @@ import (
 	"github.com/Lushenwar/Flow/internal/paths"
 )
 
-const usage = `mastd — Mast daemon
+const usage = `flowd — Flow daemon
 
-  mastd [-dev] [-port 8787]   run in the foreground (or as a service when SCM starts it)
-  mastd install [-port 8787]  register the Windows Service, auto-start on boot
-  mastd uninstall             stop, deregister, and delete all state
+  flowd [-dev] [-port 8787]   run in the foreground (or as a service when SCM starts it)
+  flowd install [-port 8787]  register the Windows Service, auto-start on boot
+  flowd uninstall             stop, deregister, and delete all state
 
   -dev   log enforcement actions instead of applying them
 `
@@ -25,7 +25,7 @@ const usage = `mastd — Mast daemon
 func main() {
 	log.SetFlags(log.Ltime)
 
-	// Subcommand comes first so "mastd install -port 9000" parses.
+	// Subcommand comes first so "flowd install -port 9000" parses.
 	cmd := ""
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		cmd = os.Args[1]

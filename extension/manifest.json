@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Mast",
+  "name": "Flow",
   "version": "0.1.0",
   "description": "Enforces URL-path rules the network layer cannot see, and closes tabs that were already open when a session started.",
-  "permissions": ["tabs", "alarms"],
+  "permissions": ["tabs", "alarms", "storage"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Mast"
+    "default_title": "Flow"
   }
 }

@@ -1,4 +1,4 @@
-// Command mastctl is the debug CLI. Read-only: it inspects the store and the
+// Command flowctl is the debug CLI. Read-only: it inspects the store and the
 // daemon, and has no verb that ends a session.
 package main
 
@@ -14,11 +14,11 @@ import (
 	"github.com/Lushenwar/Flow/internal/store"
 )
 
-const usage = `mastctl — Mast debug CLI (read-only)
+const usage = `flowctl — Flow debug CLI (read-only)
 
-  mastctl verify   check every signed row against its HMAC
-  mastctl health   GET /api/health from the running daemon
-  mastctl events   dump the event log
+  flowctl verify   check every signed row against its HMAC
+  flowctl health   GET /api/health from the running daemon
+  flowctl events   dump the event log
 `
 
 func main() {

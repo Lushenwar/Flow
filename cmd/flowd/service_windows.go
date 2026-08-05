@@ -71,12 +71,12 @@ func install(port int) error {
 
 	if s, err := m.OpenService(serviceName); err == nil {
 		s.Close()
-		return fmt.Errorf("%s is already installed; run `mastd uninstall` first", serviceName)
+		return fmt.Errorf("%s is already installed; run `flowd uninstall` first", serviceName)
 	}
 
 	s, err := m.CreateService(serviceName, exe, mgr.Config{
 		DisplayName:  paths.AppName + " commitment daemon",
-		Description:  "Enforces focus sessions and baseline blocklists. Uninstall with `mastd uninstall` from an elevated prompt.",
+		Description:  "Enforces focus sessions and baseline blocklists. Uninstall with `flowd uninstall` from an elevated prompt.",
 		StartType:    mgr.StartAutomatic, // survives reboot — threat model row 5
 		ServiceType:  windowsServiceOwnProcess,
 		Dependencies: []string{"Tcpip"},

@@ -29,7 +29,7 @@ func TestProtectedProcessesSurviveEvenWhenListed(t *testing.T) {
 		"nvda.exe":     Baseline,
 		"msmpeng.exe":  Baseline,
 		"lsass.exe":    Session,
-		"mastd.exe":    Session,
+		"flowd.exe":    Session,
 	}}
 	for name := range eff.Processes {
 		if shouldTerminate(name, eff) {

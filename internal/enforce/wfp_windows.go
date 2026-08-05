@@ -76,8 +76,8 @@ func (w *WFP) install() error {
 	// Dynamic: filters die with the process, so a crashed daemon cannot leave the
 	// machine permanently firewalled. The service restart re-applies them.
 	sess, err := wf.New(&wf.Options{
-		Name:        "Mast",
-		Description: "Mast DNS containment filters",
+		Name:        "Flow",
+		Description: "Flow DNS containment filters",
 		Dynamic:     true,
 	})
 	if err != nil {
@@ -87,8 +87,8 @@ func (w *WFP) install() error {
 
 	if err := sess.AddProvider(&wf.Provider{
 		ID:   providerGUID,
-		Name: "Mast",
-		Data: []byte("mast"),
+		Name: "Flow",
+		Data: []byte("flow"),
 	}); err != nil {
 		w.closeSession()
 		return fmt.Errorf("add provider: %w", err)
@@ -97,7 +97,7 @@ func (w *WFP) install() error {
 
 	if err := sess.AddSublayer(&wf.Sublayer{
 		ID:       sublayerGUID,
-		Name:     "Mast",
+		Name:     "Flow",
 		Provider: providerGUID,
 		Weight:   0xffff,
 	}); err != nil {
@@ -114,7 +114,7 @@ func (w *WFP) install() error {
 }
 
 func (w *WFP) addRules() error {
-	// mastd itself must reach upstream resolvers, or the sink has nothing to forward to.
+	// flowd itself must reach upstream resolvers, or the sink has nothing to forward to.
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -147,19 +147,19 @@ func (w *WFP) addRules() error {
 
 	// Weight order within the sublayer: permits outrank blocks.
 	for _, layer := range []wf.LayerID{v4, v6} {
-		if err := add("Mast permit self", layer, 30, wf.ActionPermit,
+		if err := add("Flow permit self", layer, 30, wf.ActionPermit,
 			&wf.Match{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: appID},
 		); err != nil {
 			return err
 		}
 	}
 	// Loopback: the sink lives here.
-	if err := add("Mast permit loopback DNS", v4, 25, wf.ActionPermit,
+	if err := add("Flow permit loopback DNS", v4, 25, wf.ActionPermit,
 		&wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: netip.MustParsePrefix("127.0.0.0/8")},
 	); err != nil {
 		return err
 	}
-	if err := add("Mast permit loopback DNS v6", v6, 25, wf.ActionPermit,
+	if err := add("Flow permit loopback DNS v6", v6, 25, wf.ActionPermit,
 		&wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: netip.MustParsePrefix("::1/128")},
 	); err != nil {
 		return err
@@ -169,7 +169,7 @@ func (w *WFP) addRules() error {
 	// system through the sink whatever the adapter is configured with.
 	for _, layer := range []wf.LayerID{v4, v6} {
 		for _, proto := range []wf.IPProto{wf.IPProtoUDP, wf.IPProtoTCP} {
-			if err := add("Mast block remote DNS", layer, 10, wf.ActionBlock,
+			if err := add("Flow block remote DNS", layer, 10, wf.ActionBlock,
 				&wf.Match{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: proto},
 				&wf.Match{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(53)},
 			); err != nil {
@@ -177,7 +177,7 @@ func (w *WFP) addRules() error {
 			}
 		}
 		// DNS-over-TLS.
-		if err := add("Mast block DoT", layer, 10, wf.ActionBlock,
+		if err := add("Flow block DoT", layer, 10, wf.ActionBlock,
 			&wf.Match{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoTCP},
 			&wf.Match{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(853)},
 		); err != nil {
@@ -187,7 +187,7 @@ func (w *WFP) addRules() error {
 
 	// DNS-over-HTTPS, by endpoint. Port 443 in general obviously stays open.
 	for _, ip := range dohEndpoints {
-		if err := add("Mast block DoH "+ip.String(), v4, 10, wf.ActionBlock,
+		if err := add("Flow block DoH "+ip.String(), v4, 10, wf.ActionBlock,
 			&wf.Match{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoTCP},
 			&wf.Match{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(443)},
 			&wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: ip},

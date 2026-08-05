@@ -20,7 +20,7 @@ type rulesResponse struct {
 
 // rules is deliberately unauthenticated.
 //
-// An extension cannot read %ProgramData%\Mast\token — it lives in the browser
+// An extension cannot read %ProgramData%\Flow\token — it lives in the browser
 // sandbox — so requiring the bearer token here would mean pasting a secret into
 // an options page for no gain. The endpoint is safe to leave open because it is
 // bound to loopback, is read-only, and reveals only which categories are

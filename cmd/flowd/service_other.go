@@ -16,7 +16,7 @@ func isService() bool { return false }
 func runService(dev bool, port int, block []string) error { return runConsole(dev, port, block) }
 
 func install(port int) error {
-	return errors.New("service install is Windows-only for now; run `mastd -dev` in the foreground")
+	return errors.New("service install is Windows-only for now; run `flowd -dev` in the foreground")
 }
 
 func uninstall() error {

@@ -1,10 +1,11 @@
-# CLAUDE.md — Mast (Commitment Blocker + Focus Timer, Desktop)
+# CLAUDE.md — Flow (Commitment Blocker + Focus Timer, Desktop)
 
-> **Codename resolved at Phase 0: `Mast`.** Odysseus tied himself to it — chosen restraint, not
-> imprisonment, which is the product thesis in one word. `Portcullis` was backwards (it keeps
-> invaders out; this app keeps you in) and `Rubicon` is one-way, which the escape hatch is not.
-> The name is baked into `paths.AppName`, the service registration, `%ProgramData%\Mast`, and the
-> binaries `mastd` / `mastctl`.
+> **Name: `Flow`.** Named for the state it exists to protect, not for the mechanism that protects it.
+> `Portcullis` had the metaphor backwards (it keeps invaders out; this app keeps you in), and both
+> `Mast` and `Rubicon` named the restraint rather than the point of it — the lock is the means, an
+> hour of uninterrupted attention is the end.
+> Baked into `paths.AppName`, the service registration, `%ProgramData%\Flow`, and the binaries
+> `flowd` / `flowctl`.
 
 ## WORKFLOW: BRANCH + PR ONLY
 
@@ -14,7 +15,7 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ## CURRENT STATUS
 
 ╔══════════════════════════════════════════════════════════╗
-║  MAST BUILD PROGRESS                      6/8 DONE ║
+║  FLOW BUILD PROGRESS                      6/8 DONE ║
 ║  ██████████████████████░░░░░░  PHASE 7 BUILT, 1 & 7 [~]  ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [~   ]  ║
@@ -70,16 +71,23 @@ terminated on rule application", and it is not: a YouTube tab open before enforc
 serving for about two minutes. See Correction 1. Everything else in Phase 1 passes.
 
 **Phase 7 (Chrome only) is built.** `GET /api/rules` is unauthenticated by design — an extension
-cannot read `%ProgramData%\Mast\token`, and the endpoint is loopback-only, read-only, and grants no
+cannot read `%ProgramData%\Flow\token`, and the endpoint is loopback-only, read-only, and grants no
 authority. The extension adds the two things the network layer structurally cannot do: URL-path
 granularity, and closing tabs that were already open when a session started.
 
-`[~]` because the extension has not been loaded into a browser yet — `chrome://extensions` →
-Developer mode → Load unpacked is a native file picker, so it is the one manual step. The matcher is
-covered by 11 `node --test` cases and `/api/rules` was fetched from Chrome successfully.
+**The warm-tab fix works.** Loaded in Chrome, with a YouTube `/watch` tab open, committing a session
+that blocks `preset.video` redirected that open tab to the blocked page within 5 seconds. That is
+the Correction 1 gap closed — by the extension, not by the network layer, which still cannot do it.
 
-**Still unverified:** Firefox and Edge, reboot survival of a locked session, and the extension
-end-to-end in a browser.
+**Race found and fixed in the same run:** MV3 suspends the service worker after ~30s idle and re-runs
+the file on the next event. `checkTab` was evaluating against `rules === null` because the fetch had
+not resolved, so the first navigation after every wake sailed through — measured on a YouTube
+`/watch`. Rules are now cached in `chrome.storage.session` and every check awaits a priming promise.
+
+`[~]` until the fixed build is re-verified in the browser, and because `install.ps1` is not the
+signed installer the exit criterion asks for.
+
+**Still unverified:** Firefox and Edge, and reboot survival of a locked session.
 
 **Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
 is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
@@ -95,7 +103,7 @@ stray Go package (`flatted/golang`) that `./...` picks up as part of this module
 
 ## WHAT THIS FILE IS
 
-The authoritative guide for building Mast: a desktop commitment device combining a hard-locked
+The authoritative guide for building Flow: a desktop commitment device combining a hard-locked
 focus timer with OS-level distraction blocking. Binding spec for the daemon, the local API, and the
 UI. Where this file and a code comment disagree, this file wins until someone edits this file.
 
@@ -284,7 +292,7 @@ A PR violating one does not merge, regardless of what it improves.
   behind `enforce.Enforcer` so macOS/Linux are additive, not a rewrite.
 * **WFP:** `github.com/tailscale/wf` — production-tested, saves ~1,500 lines of hand-rolled
   `unsafe.Pointer` struct marshalling for `FWPM_FILTER0` and friends.
-* **Store:** SQLite (`modernc.org/sqlite`, cgo-free) at `%ProgramData%\Mast\state.db`, every
+* **Store:** SQLite (`modernc.org/sqlite`, cgo-free) at `%ProgramData%\Flow\state.db`, every
   mutable row HMAC-signed, key DPAPI-wrapped.
 * **Local API:** HTTP on `127.0.0.1` only, bearer token, JSON.
 * **UI:** Next.js (App Router, TypeScript strict, Tailwind, Lucide) static export, wrapped in
@@ -298,10 +306,10 @@ A PR violating one does not merge, regardless of what it improves.
 ## ARCHITECTURE
 
 ```text
-mast/
+flow/
 ├── cmd/
-│   ├── mastd/            # service: main, SCM integration, watchdog
-│   └── mastctl/          # debug CLI (read-only in release builds)
+│   ├── flowd/            # service: main, SCM integration, watchdog
+│   └── flowctl/          # debug CLI (read-only in release builds)
 ├── internal/
 │   ├── session/
 │   │   ├── machine.go          # IDLE→ARMING→FOCUS→COMPLETE
@@ -332,9 +340,9 @@ mast/
 │       │   ├── BaselineRow.tsx # switch + pending-disable countdown
 │       │   ├── ScheduleRow.tsx
 │       │   └── CommitDialog.tsx
-│       └── lib/                # mast-client.ts, use-poll.ts, state.ts (pure)
+│       └── lib/                # flow-client.ts, use-poll.ts, state.ts (pure)
 ├── extension/                  # Phase 7
-└── MAST.md               # architecture notes below the API surface
+└── FLOW.md               # architecture notes below the API surface
 ```
 
 **Ownership rule:** the daemon owns all authority; the UI owns zero. Delete the UI mid-session and
@@ -424,7 +432,7 @@ when the process does.
 ## LOCAL API SPECIFICATION
 
 `http://127.0.0.1:<port>`, loopback bind only, bearer token from
-`%ProgramData%\Mast\token` (ACL: Administrators + interactive user).
+`%ProgramData%\Flow\token` (ACL: Administrators + interactive user).
 
 The token being user-readable is deliberate and safe, because **no verb in this API ends a locked
 session or instantly disables a baseline rule.** Authority is in the state machine, not the transport.
@@ -583,7 +591,7 @@ it's enforced, but it has no switch because you don't control it right now.
 
 ### PHASE 0 — DAEMON, SERVICE INSTALL, SIGNED STORE
 **Exit:** installs as a Windows Service, auto-starts on boot, serves `GET /api/health` on loopback
-with token auth, writes an HMAC-signed row that `mastctl verify` confirms and rejects after a
+with token auth, writes an HMAC-signed row that `flowctl verify` confirms and rejects after a
 manual `sqlite3` edit.
 * SCM integration (`x/sys/windows/svc`), install/uninstall, boot auto-start.
 * Store, migrations, DPAPI-wrapped key, `sign.go` round-trip tests.
@@ -617,7 +625,7 @@ true target in every case except (e), which ends 3 minutes early by design.
 **Exit:** two-tab shell; the Blocking screen lists categories with switches; enabling blocks
 immediately; disabling shows a live "unblocks in 14:32 · cancel" countdown while the site stays
 blocked; cancelling is instant; the countdown survives an app restart.
-* `lib/mast-client.ts` + `use-poll.ts`, ported from Parallax.
+* `lib/flow-client.ts` + `use-poll.ts`, ported from Parallax.
 * `lib/state.ts` — pure derivations (countdown strings, progress fraction). Unit tested. **No
   component computes time.**
 * Shell: two 13px text tabs top-left, card container. Spec in **VISUAL DESIGN → Shell**.
@@ -689,25 +697,25 @@ Presets are seed data, not code. A user edit forks the preset into a custom list
 
 ```powershell
 # Terminal 1 — daemon, dev mode (console, enforcement DRY-RUN unless elevated)
-go run ./cmd/mastd -dev -port 8787
+go run ./cmd/flowd -dev -port 8787
 
-# Terminal 2 — UI. The token is in %ProgramData%\Mast\token (or $env:MAST_DATA_DIR\token).
+# Terminal 2 — UI. The token is in %ProgramData%\Flow\token (or $env:FLOW_DATA_DIR\token).
 cd ui
-$env:NEXT_PUBLIC_MAST_URL   = "http://127.0.0.1:8787"
-$env:NEXT_PUBLIC_MAST_TOKEN = (Get-Content "$env:ProgramData\Mast\token").Trim()
+$env:NEXT_PUBLIC_FLOW_URL   = "http://127.0.0.1:8787"
+$env:NEXT_PUBLIC_FLOW_TOKEN = (Get-Content "$env:ProgramData\Flow\token").Trim()
 npm run dev                 # http://localhost:3000
 
 # Inspect a running daemon (read-only)
-go run ./cmd/mastctl health
-go run ./cmd/mastctl verify
+go run ./cmd/flowctl health
+go run ./cmd/flowctl verify
 
 # Install as a real service (ELEVATED PROMPT REQUIRED — SCM access is denied otherwise)
-go build -o mastd.exe ./cmd/mastd
-.\mastd.exe install
-.\mastd.exe uninstall
+go build -o flowd.exe ./cmd/flowd
+.\flowd.exe install
+.\flowd.exe uninstall
 ```
 
-`MAST_DATA_DIR` overrides `%ProgramData%\Mast`. Use it to run a throwaway instance without touching
+`FLOW_DATA_DIR` overrides `%ProgramData%\Flow`. Use it to run a throwaway instance without touching
 the real one.
 
 `-dev` logs every enforcement action instead of applying it. **Use it.** The first person this app

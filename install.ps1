@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs Mast: builds the binaries, registers the service, and points you at the
+  Installs Flow: builds the binaries, registers the service, and points you at the
   browser extension.
 
 .DESCRIPTION
@@ -9,7 +9,7 @@
 
   ponytail: not a signed MSI. Code signing needs a certificate this project does
   not have, and an unsigned MSI is no more trustworthy than a script you can read.
-  The uninstall path is `mastd.exe uninstall`, which is what matters.
+  The uninstall path is `flowd.exe uninstall`, which is what matters.
 #>
 param(
     [int]$Port = 8787,
@@ -18,7 +18,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$installDir = "$env:ProgramFiles\Mast"
+$installDir = "$env:ProgramFiles\Flow"
 
 function Assert-Elevated {
     $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -32,27 +32,27 @@ Assert-Elevated
 Write-Host "Building..."
 Push-Location $root
 try {
-    & go build -o "$root\mastd.exe" ./cmd/mastd
+    & go build -o "$root\flowd.exe" ./cmd/flowd
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
-    & go build -o "$root\mastctl.exe" ./cmd/mastctl
+    & go build -o "$root\flowctl.exe" ./cmd/flowctl
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
 }
 finally { Pop-Location }
 
 Write-Host "Installing to $installDir..."
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-Copy-Item "$root\mastd.exe","$root\mastctl.exe" -Destination $installDir -Force
+Copy-Item "$root\flowd.exe","$root\flowctl.exe" -Destination $installDir -Force
 Copy-Item "$root\extension" -Destination $installDir -Recurse -Force
 
 # Remove any previous registration first, so re-running is safe.
-& "$installDir\mastd.exe" uninstall 2>&1 | Out-Null
-& "$installDir\mastd.exe" install -port $Port
+& "$installDir\flowd.exe" uninstall 2>&1 | Out-Null
+& "$installDir\flowd.exe" install -port $Port
 if ($LASTEXITCODE -ne 0) { throw "service install failed" }
 
 Write-Host ""
 Write-Host "Service installed and started. It auto-starts on boot."
-Write-Host "  Verify:   $installDir\mastctl.exe health"
-Write-Host "  Remove:   $installDir\mastd.exe uninstall"
+Write-Host "  Verify:   $installDir\flowctl.exe health"
+Write-Host "  Remove:   $installDir\flowd.exe uninstall"
 Write-Host ""
 Write-Host "One manual step — the browser extension:"
 Write-Host "  1. Open chrome://extensions"

@@ -94,7 +94,7 @@ type health struct {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	h := health{
 		Status:    "ok",
-		App:       "mast",
+		App:       "flow",
 		Dev:       s.dev,
 		UptimeSec: int64(time.Since(s.started).Seconds()),
 		Signature: "ok",

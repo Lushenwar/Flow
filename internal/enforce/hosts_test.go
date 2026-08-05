@@ -108,7 +108,7 @@ func TestHostsClearLeavesNoResidue(t *testing.T) {
 	}
 
 	got := read(t, h)
-	if strings.Contains(got, "MAST") || strings.Contains(got, "youtube") {
+	if strings.Contains(got, "FLOW") || strings.Contains(got, "youtube") {
 		t.Fatalf("uninstall left residue:\n%s", got)
 	}
 	if !strings.Contains(got, "10.0.0.5 build-server") {
@@ -130,7 +130,7 @@ func TestHostsLeavesNoTempFileBehind(t *testing.T) {
 	if err := h.Clear(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(h.Path + ".mast.tmp"); !os.IsNotExist(err) {
+	if _, err := os.Stat(h.Path + ".flow.tmp"); !os.IsNotExist(err) {
 		t.Fatal("temp file left in the hosts directory")
 	}
 }
@@ -147,10 +147,10 @@ func TestHostsWriteFallsBackWhenReplaceIsRefused(t *testing.T) {
 
 	// A directory where the temp file wants to go makes the rename fail without
 	// making the target unwritable — the same shape as the observed denial.
-	if err := os.Mkdir(path+".mast.tmp", 0o755); err != nil {
+	if err := os.Mkdir(path+".flow.tmp", 0o755); err != nil {
 		t.Skipf("cannot stage the failure on this platform: %v", err)
 	}
-	defer os.RemoveAll(path + ".mast.tmp")
+	defer os.RemoveAll(path + ".flow.tmp")
 
 	if err := writeHosts(path, []byte("written anyway\n")); err != nil {
 		t.Fatalf("gave up instead of falling back: %v", err)

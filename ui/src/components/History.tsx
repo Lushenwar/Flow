@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/mast-client";
+import { api } from "@/lib/flow-client";
 import { eventLabel, visibleEvents, type EventRow } from "@/lib/state";
 
 /**

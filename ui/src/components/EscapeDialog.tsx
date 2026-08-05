@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError, api } from "@/lib/mast-client";
+import { ApiError, api } from "@/lib/flow-client";
 import { formatCountdown, secondsUntil, type SessionView } from "@/lib/state";
 
 interface Props {

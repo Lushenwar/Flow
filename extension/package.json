@@ -1,5 +1,5 @@
 {
-  "name": "mast-extension",
+  "name": "flow-extension",
   "private": true,
   "type": "module",
   "scripts": {
