@@ -56,7 +56,9 @@ export function Dial({ text, fraction, action, neutral, onTap }: Props) {
           fill="none"
           stroke={arcColor}
           strokeWidth={STROKE}
-          strokeLinecap="round"
+          // A round cap on a zero-length dash still paints: an accent dot at
+          // twelve o'clock in IDLE, where the spec says the arc is empty.
+          strokeLinecap={fraction > 0 ? "round" : "butt"}
           strokeDasharray={dashArray(fraction)}
           transform={`rotate(-90 ${CENTER} ${CENTER})`}
           style={{ transition: "stroke-dasharray 240ms linear" }}
