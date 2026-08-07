@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +136,45 @@ func TestHealthReportsLayerFailures(t *testing.T) {
 	}
 	if got.Reconcile == "never" {
 		t.Fatal("last reconcile not reported")
+	}
+}
+
+// The dev UI runs on localhost:3000 and the daemon on 127.0.0.1:8787 — a
+// cross-origin pair. Without these headers the browser drops every response and
+// the app sits on "Loading…" with an empty console.
+func TestDevCORS(t *testing.T) {
+	h, _, _ := newServer(t) // dev: true
+	if got := get(t, h, "/api/health", "secret").Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("dev build must allow the origin, got %q", got)
+	}
+
+	// A preflight carries no Authorization header, so answering it through the
+	// token check would 401 and the real request would never be sent.
+	req := httptest.NewRequest("OPTIONS", "/api/state", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight got %d, want 204", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Authorization") {
+		t.Fatalf("preflight must permit the bearer header, got %q",
+			rec.Header().Get("Access-Control-Allow-Headers"))
+	}
+}
+
+// Release builds are same-origin, so the header would only be widening the
+// surface for nothing.
+func TestReleaseHasNoCORS(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	h := New(st, "secret", false, fakeEnforcement{}, nil).Handler()
+	if got := get(t, h, "/api/health", "secret").Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("release build set CORS to %q", got)
 	}
 }
 
