@@ -32,31 +32,62 @@ function pipApi(): DocumentPiP | undefined {
  *  the button is absent in the HTML and appears on hydration without a mismatch. */
 const NO_UPDATES = () => () => {};
 
-export function PopOutTimer({ children }: { children: ReactNode }) {
+export function PopOutTimer({
+  children,
+}: {
+  children: (now: number) => ReactNode;
+}) {
   const supported = useSyncExternalStore(
     NO_UPDATES,
     () => !!pipApi(),
     () => false,
   );
   const [pip, setPip] = useState<Window | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   // Closing the tab must not leave an orphaned window floating over everything.
   useEffect(() => () => pip?.close(), [pip]);
 
+  // The clock has to come from the pop-out's own window, not the page's.
+  // Whenever this widget is the thing you are looking at, the tab that owns it
+  // is by definition in the background, and Chrome throttles a hidden tab's
+  // timers hard — measured here as a hidden tab issuing zero requests at all.
+  // The pop-out window is visible, so its timers keep full rate.
+  //
+  // Only the countdown is driven from this. The arc still moves with the poll:
+  // it advances by a third of a percent a minute, so nobody sees it wait.
+  useEffect(() => {
+    if (!pip) return;
+    const id = pip.setInterval(() => setNow(Date.now()), 1000);
+    return () => pip.clearInterval(id);
+  }, [pip]);
+
   async function open() {
     const w = await pipApi()!.requestWindow({ width: 220, height: 240 });
+
     // The PiP document starts empty — no stylesheets, no CSS variables. Cloning
     // the page's own <style>/<link> nodes is what makes the timer look like the
-    // timer instead of unstyled text.
-    for (const node of document.querySelectorAll(
+    // timer instead of unstyled text. Every token comes across with them, so the
+    // widget tracks the app's design rather than restating it here.
+    for (const node of document.querySelectorAll<HTMLElement>(
       'style, link[rel="stylesheet"]',
     )) {
-      w.document.head.appendChild(node.cloneNode(true));
+      const clone = node.cloneNode(true) as HTMLElement;
+      if (clone instanceof HTMLLinkElement) {
+        // The attribute is relative and this document's base URL is not the
+        // page's, so a plain clone would 404. The property is already absolute.
+        clone.href = (node as HTMLLinkElement).href;
+      }
+      w.document.head.appendChild(clone);
     }
-    w.document.body.style.display = "grid";
-    w.document.body.style.placeItems = "center";
-    w.document.body.style.height = "100vh";
-    w.document.body.style.margin = "0";
+
+    // The app puts every screen on a card, so the pop-out is that card with the
+    // window as its border: same surface, same text colour, centred content. A
+    // radius and a hairline would only sit under the OS window edge.
+    const body = w.document.body;
+    body.className = document.body.className;
+    body.style.cssText =
+      "margin:0;height:100vh;display:grid;place-items:center;background:var(--surface)";
     w.addEventListener("pagehide", () => setPip(null));
     setPip(w);
   }
@@ -73,7 +104,7 @@ export function PopOutTimer({ children }: { children: ReactNode }) {
       >
         {pip ? "close pop-out timer" : "pop out timer"}
       </button>
-      {pip && createPortal(children, pip.document.body)}
+      {pip && createPortal(children(now), pip.document.body)}
     </>
   );
 }

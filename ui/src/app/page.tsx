@@ -139,15 +139,22 @@ export default function FocusScreen() {
           there to show you the countdown, not to be a second place to commit or
           abort from. */}
       <PopOutTimer>
-        <Dial
-          // The hint goes with the tap. "tap to commit" over a dial that does
-          // nothing is the same contradiction FOCUS avoids by dropping it.
-          text={{ ...text, hint: undefined }}
-          fraction={arcFraction(session)}
-          action="none"
-          neutral={session.state === "COMPLETE"}
-          onTap={() => {}}
-        />
+        {(pipNow) => (
+          <Dial
+            // Its own clock, from the pop-out's window rather than this page's —
+            // see PopOutTimer. The hint goes with the tap: "tap to commit" over
+            // a dial that does nothing is the same contradiction FOCUS avoids by
+            // dropping it.
+            text={{
+              ...dialText(session, baselineOnCount(state.baseline), minutes, pipNow),
+              hint: undefined,
+            }}
+            fraction={arcFraction(session)}
+            action="none"
+            neutral={session.state === "COMPLETE"}
+            onTap={() => {}}
+          />
+        )}
       </PopOutTimer>
 
       {dialogOpen && (
