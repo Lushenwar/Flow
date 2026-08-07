@@ -6,6 +6,7 @@ import { CommitDialog } from "@/components/CommitDialog";
 import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
 import { EscapeDialog } from "@/components/EscapeDialog";
+import { PopOutTimer } from "@/components/PopOutTimer";
 import { api } from "@/lib/flow-client";
 import {
   arcFraction,
@@ -133,6 +134,21 @@ export default function FocusScreen() {
           {session.escape.requested ? "ending early…" : "end early"}
         </button>
       )}
+
+      {/* The same dial in a window the OS keeps on top. Inert on purpose: it is
+          there to show you the countdown, not to be a second place to commit or
+          abort from. */}
+      <PopOutTimer>
+        <Dial
+          // The hint goes with the tap. "tap to commit" over a dial that does
+          // nothing is the same contradiction FOCUS avoids by dropping it.
+          text={{ ...text, hint: undefined }}
+          fraction={arcFraction(session)}
+          action="none"
+          neutral={session.state === "COMPLETE"}
+          onTap={() => {}}
+        />
+      </PopOutTimer>
 
       {dialogOpen && (
         <CommitDialog
