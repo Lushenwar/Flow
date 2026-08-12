@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,8 @@ const (
 	// bankKey and schedulesKey hold the signed bank and schedule rows.
 	bankKey      = "bank"
 	schedulesKey = "schedules"
+	// customKey holds the signed list of user-added domains.
+	customKey = "custom"
 	// tickEvery drives state transitions. Sub-second precision is pointless for
 	// a 25-minute lock.
 	tickEvery = time.Second
@@ -45,6 +49,10 @@ type Manager struct {
 	challenge Challenge
 	bank      Bank
 	schedules *schedule.Set
+	// custom is the user's own domains. It is content, not a fourth rule source:
+	// it reaches the union as one list carried by a baseline rule, so it inherits
+	// the same attribution and the same 15-minute disable delay as a preset.
+	custom []string
 }
 
 func NewManager(st *store.Store, c Clock, enf Enforcement, cat blocklist.Catalog, baseline []string) *Manager {
@@ -322,10 +330,27 @@ func (m *Manager) rulesLocked() []enforce.Rule {
 	return rules
 }
 
+// catalogLocked is the preset catalog plus the user's own list.
+//
+// ponytail: copies the map on every call rather than caching an assembled
+// catalog and invalidating it. Eleven entries, once a second at worst — a cache
+// here would cost more in staleness bugs than it saves in allocations.
+func (m *Manager) catalogLocked() blocklist.Catalog {
+	if len(m.custom) == 0 {
+		return m.cat
+	}
+	out := make(blocklist.Catalog, len(m.cat)+1)
+	for id, l := range m.cat {
+		out[id] = l
+	}
+	out[blocklist.CustomListID] = blocklist.CustomList(m.custom)
+	return out
+}
+
 // applyLocked recomputes the union and hands it to the enforcer. Never an
 // override, never a precedence chain.
 func (m *Manager) applyLocked() {
-	m.enf.Set(enforce.Union(m.cat, m.rulesLocked()))
+	m.enf.Set(enforce.Union(m.catalogLocked(), m.rulesLocked()))
 }
 
 // Effective is what /api/state reports, computed daemon-side. The UI must never
@@ -333,7 +358,7 @@ func (m *Manager) applyLocked() {
 func (m *Manager) Effective() enforce.Effective {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return enforce.Union(m.cat, m.rulesLocked())
+	return enforce.Union(m.catalogLocked(), m.rulesLocked())
 }
 
 // Bank returns the balance and any open recreation window.
@@ -433,6 +458,106 @@ func (m *Manager) CancelBaselineDisable(id string) error {
 	return m.persistLocked()
 }
 
+// Custom returns the user's own blocked domains.
+func (m *Manager) Custom() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.custom...)
+}
+
+// AddCustom adds domains to the user's list. Strengthening, so it is instant and
+// allowed in every state, mid-session included — the same rule that lets a
+// baseline category be switched on during a session.
+//
+// Adding also enables the custom rule. A site you just typed in should be
+// blocked when you press the button, not when you remember to flip a second
+// switch; and enabling is itself a strengthening operation, so nothing is
+// weakened by doing it for you.
+//
+// All-or-nothing on a bad entry. Partial success would mean reporting "3 of 5
+// added" and leaving the user to work out which two, on a screen whose entire
+// job is telling you what is enforced.
+func (m *Manager) AddCustom(raws []string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	have := map[string]bool{}
+	for _, d := range m.custom {
+		have[d] = true
+	}
+
+	var added []string
+	for _, raw := range raws {
+		d, err := blocklist.NormalizeDomain(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", strings.TrimSpace(raw), err)
+		}
+		if have[d] {
+			continue // already blocked; not an error, just nothing to do
+		}
+		have[d] = true
+		added = append(added, d)
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	if len(m.custom)+len(added) > blocklist.MaxCustomDomains {
+		return nil, blocklist.ErrTooManyCustom
+	}
+
+	m.custom = append(m.custom, added...)
+	sort.Strings(m.custom)
+	m.baseline.Enable(blocklist.CustomListID)
+
+	m.event("custom_added", fmt.Sprintf(`{"count":%d}`, len(added)))
+	m.applyLocked()
+	return added, m.persistLocked()
+}
+
+// RemoveCustom takes a domain back off the list, and refuses while that list is
+// being enforced.
+//
+// This is the asymmetry applied to content rather than categories, and it needs
+// no new machinery: turn the Custom sites row off first, which takes the usual
+// fifteen minutes, then edit. Without the guard the list would be an off switch
+// with extra steps — add the site you actually struggle with, then delete it the
+// moment you want it back.
+func (m *Manager) RemoveCustom(raw string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+	m.tickBaselineLocked()
+
+	// Checked on the rule rather than on the effective set, so that a bank spend —
+	// which suppresses enforcement for its window — is not a hole you can edit through.
+	if r, ok := m.baseline.Rules[blocklist.CustomListID]; ok && r.Enabled {
+		return ErrWouldWeaken
+	}
+	// And separately for a session or schedule that names the list directly.
+	if _, live := enforce.Union(m.catalogLocked(), m.rulesLocked()).Lists[blocklist.CustomListID]; live {
+		return ErrWouldWeaken
+	}
+
+	d, err := blocklist.NormalizeDomain(raw)
+	if err != nil {
+		return err
+	}
+	kept := m.custom[:0:0]
+	for _, existing := range m.custom {
+		if existing != d {
+			kept = append(kept, existing)
+		}
+	}
+	if len(kept) == len(m.custom) {
+		return nil // not there; nothing to do
+	}
+	m.custom = kept
+
+	m.event("custom_removed", fmt.Sprintf(`{"domain":%q}`, d))
+	m.applyLocked()
+	return m.persistLocked()
+}
+
 func (m *Manager) tickBaselineLocked() bool {
 	fired := m.baseline.Tick(m.clock, nil)
 	for _, id := range fired {
@@ -467,7 +592,14 @@ func (m *Manager) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return m.st.Put(schedulesKey, string(sc))
+	if err := m.st.Put(schedulesKey, string(sc)); err != nil {
+		return err
+	}
+	cu, err := json.Marshal(m.custom)
+	if err != nil {
+		return err
+	}
+	return m.st.Put(customKey, string(cu))
 }
 
 // loadExtrasLocked restores the bank and schedules. A tampered row is refused
@@ -485,6 +617,19 @@ func (m *Manager) loadExtrasLocked() {
 	} else if err == store.ErrTampered {
 		m.event("bank_signature_invalid", "{}")
 		log.Printf("bank row failed its signature; balance reset to zero")
+	}
+
+	// A tampered custom row keeps the startup default of nothing, which is the
+	// safe direction for the store but the wrong one for the user: it silently
+	// unblocks their own list. The event is what makes that visible.
+	if raw, err := m.st.Get(customKey); err == nil {
+		var domains []string
+		if json.Unmarshal([]byte(raw), &domains) == nil {
+			m.custom = domains
+		}
+	} else if err == store.ErrTampered {
+		m.event("custom_signature_invalid", "{}")
+		log.Printf("custom domain row failed its signature; the list is empty until you re-add them")
 	}
 
 	if raw, err := m.st.Get(schedulesKey); err == nil {

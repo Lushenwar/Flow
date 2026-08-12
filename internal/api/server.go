@@ -54,6 +54,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/baseline/{id}/disable", s.baselineDisable)
 		mux.HandleFunc("DELETE /api/baseline/{id}/disable", s.baselineCancelDisable)
 
+		mux.HandleFunc("GET /api/blocklists", s.customList)
+		mux.HandleFunc("POST /api/blocklists", s.customAdd)
+		mux.HandleFunc("DELETE /api/blocklists/{domain}", s.customRemove)
+
 		mux.HandleFunc("GET /api/bank", s.bank)
 		mux.HandleFunc("POST /api/bank/spend", s.spend)
 		mux.HandleFunc("GET /api/schedules", s.schedules)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lushenwar/Flow/internal/blocklist"
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -149,6 +150,28 @@ func TestSinkDoesNotBlockBySubstring(t *testing.T) {
 	}
 	if rc := ask(t, sink, "youtube.com.evil.net"); rc != dnsmessage.RCodeSuccess {
 		t.Errorf("youtube.com.evil.net got %v — it is not under youtube.com", rc)
+	}
+}
+
+// The whole chain for a user-added site: typed into the box, through the
+// catalog as an ordinary list, out of the sink as NXDOMAIN — subdomains
+// included, which is why the leading www. is stripped on the way in.
+func TestSinkBlocksUserAddedDomains(t *testing.T) {
+	domain, err := blocklist.NormalizeDomain("https://www.example-forum.com/r/hot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCustom := blocklist.Catalog{blocklist.CustomListID: blocklist.CustomList([]string{domain})}
+	sink := startSink(t, Union(withCustom, []Rule{{blocklist.CustomListID, Baseline}}))
+
+	for _, name := range []string{"example-forum.com", "www.example-forum.com", "old.example-forum.com"} {
+		if rc := ask(t, sink, name); rc != dnsmessage.RCodeNameError {
+			t.Errorf("%s got %v, want NXDOMAIN", name, rc)
+		}
+	}
+	// A custom list is still a list: it cannot reach past a label boundary.
+	if rc := ask(t, sink, "notexample-forum.com"); rc != dnsmessage.RCodeSuccess {
+		t.Errorf("notexample-forum.com got %v — suffix match must respect labels", rc)
 	}
 }
 

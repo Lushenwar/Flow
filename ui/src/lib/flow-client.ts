@@ -2,6 +2,7 @@ import type {
   AppState,
   BankView,
   BaselineRow,
+  CustomList,
   EventRow,
   ScheduleRow,
 } from "./state";
@@ -28,6 +29,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /** The offending input, when the daemon could name it. "Invalid" is not a
+     *  fix you can act on after pasting twenty lines. */
+    readonly detail?: string,
   ) {
     super(`${status} ${code}`);
   }
@@ -49,12 +53,15 @@ async function call<T>(
 
   if (!res.ok) {
     let code = res.statusText;
+    let detail: string | undefined;
     try {
-      code = ((await res.json()) as { error?: string }).error ?? code;
+      const body = (await res.json()) as { error?: string; detail?: string };
+      code = body.error ?? code;
+      detail = body.detail;
     } catch {
       // A non-JSON error body is still an error; the status carries the meaning.
     }
-    throw new ApiError(res.status, code);
+    throw new ApiError(res.status, code, detail);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -98,6 +105,19 @@ export const api = {
     call<ScheduleRow[]>("/api/schedules", {
       method: "POST",
       body: JSON.stringify(s),
+    }),
+
+  /** The user's own list. Adding strengthens and always works; removing is
+   *  refused while the list is enforced, which is a 409 the UI explains. */
+  blocklists: () => call<CustomList>("/api/blocklists"),
+  addBlocked: (domains: string[]) =>
+    call<{ added: string[]; list: CustomList }>("/api/blocklists", {
+      method: "POST",
+      body: JSON.stringify({ domains }),
+    }),
+  removeBlocked: (domain: string) =>
+    call<CustomList>(`/api/blocklists/${encodeURIComponent(domain)}`, {
+      method: "DELETE",
     }),
 
   baseline: () => call<BaselineRow[]>("/api/baseline"),

@@ -567,8 +567,26 @@ is what stops the Blocking screen from appearing to lift a permanent rule when a
 * `DELETE /api/baseline/{id}/disable` — cancels a pending disable, immediate and free.
 
 ### Lists, schedules, bank, events
-* `GET|POST /api/blocklists`, `PUT|DELETE /api/blocklists/{id}` — mutations evaluated for **direction**
-  while anything is active: adding is allowed, removing returns `409 would_weaken`.
+* `GET|POST /api/blocklists`, `DELETE /api/blocklists/{domain}` — the user's own sites, for the
+  things no preset covers. Mutations are evaluated for **direction**: adding strengthens and is
+  always allowed, mid-session included; removing weakens and returns `409 would_weaken`.
+  * **The id in the DELETE path is a domain, not a list id.** There is exactly one user list, so
+    addressing the list would leave no way to name the entry being removed.
+  * `POST` takes `{"domains": [...]}` and accepts whole URLs, because the address bar is where the
+    decision to block something gets made. Everything after the host is discarded and a leading
+    `www.` is stripped — matching is by label-boundary suffix, so one entry covers the subdomains.
+    A path is *not* silently honoured: HTTPS means the network layer sees `reddit.com` and never
+    `/r/all`, and accepting a path while blocking the whole domain would leave the user believing
+    they had scoped something they had not.
+  * A bad entry rejects the **whole batch**. "3 of 5 added" on a screen whose job is telling you
+    what is enforced is worse than refusing.
+  * The permanent allowlist is refused with `allowlisted` rather than dropped. `Resolve` strips it
+    anyway, so a silent accept would leave the entry sitting in the list looking enforced.
+  * **Removing is refused while the list is enforced**, and the way out is the ordinary one: turn the
+    Custom sites row off, which takes the usual fifteen minutes, then edit. This needs no new
+    machinery — the list reaches the union as one list carried by a baseline rule, so it inherits
+    that rule's attribution and its delay. Checked on the rule rather than the effective set, so a
+    bank spend is not a window you can edit through.
 * `GET|POST /api/schedules`
 * `GET /api/bank`, `POST /api/bank/spend` — requires IDLE; a spend is itself a small locked window that
   hard re-locks at expiry, and cannot be cancelled to bank the remainder.
@@ -772,6 +790,11 @@ sets up service, autostart, and extension in one pass.
 | `preset.offline` | Session | Everything except allowlist |
 
 Presets are seed data, not code. A user edit forks the preset into a custom list.
+
+**`custom.blocked` is the user's own list**, and it is not a fourth rule source — it is content
+carried by a baseline rule, so the union, the attribution, and the 15-minute disable delay all apply
+to it unchanged. See `GET|POST /api/blocklists` above. It exists because the presets will never
+cover everything, and a blocker you cannot point at your own problem site is one you stop using.
 
 ---
 

@@ -51,6 +51,31 @@ export interface BankView {
   remainingSeconds: number;
 }
 
+export interface CustomList {
+  id: string;
+  name: string;
+  domains: string[];
+  /** Mirrors the baseline rule carrying the list. Removal is refused while this
+   *  is true, and the daemon is what decides it — the UI only reports it. */
+  enabled: boolean;
+  max: number;
+}
+
+/**
+ * Split whatever was typed into candidate domains.
+ *
+ * People paste lists — one per line out of a note, or comma-separated out of
+ * somewhere else. Splitting here rather than making them add one at a time is
+ * the difference between blocking twelve sites and giving up after three.
+ * Validation stays on the daemon; this only decides where the boundaries are.
+ */
+export function splitDomains(input: string): string[] {
+  return input
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** "23:00 – 07:00 · every day", with the pinned zone shown when it differs. */
 export function scheduleWindow(s: ScheduleRow, systemTz?: string): string {
   const base = `${s.start} – ${s.end}`;
@@ -104,6 +129,9 @@ export function eventLabel(kind: string): string | null {
     boot_recovered: "Session restored after restart",
     session_signature_invalid: "Saved session failed its signature check",
     baseline_signature_invalid: "Saved blocks failed their signature check",
+    custom_added: "Sites added to your list",
+    custom_removed: "Site removed from your list",
+    custom_signature_invalid: "Saved custom sites failed their signature check",
   };
   // Unknown kinds are dropped rather than shown raw: service_start on every
   // launch is noise, not history.
@@ -234,6 +262,7 @@ export function listName(id: string): string {
     "preset.offline": "Offline",
     "preset.work": "Work",
     "preset.study": "Study",
+    "custom.blocked": "Custom sites",
   };
   return names[id] ?? id;
 }
