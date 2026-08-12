@@ -64,7 +64,7 @@ func (s *Server) Handler() http.Handler {
 	// /api/rules sits outside the token check. See the comment on rules() — the
 	// extension cannot read the token file, and the endpoint grants no authority.
 	outer := http.NewServeMux()
-	outer.Handle("/", s.auth(mux))
+	outer.Handle("/", s.devCORS(s.auth(mux)))
 	if s.sess != nil {
 		outer.HandleFunc("GET /api/rules", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -72,6 +72,31 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	return outer
+}
+
+// devCORS lets `npm run dev` on localhost:3000 talk to the daemon. Without it
+// the browser blocks every call and the UI never leaves "Loading…", which is
+// what the documented dev loop in CLAUDE.md actually did.
+//
+// Dev builds only, and it widens nothing: the token still gates every route, a
+// page cannot read %ProgramData%\Flow\token, and no verb here ends a locked
+// session. In release the UI is same-origin and this is off.
+func (s *Server) devCORS(next http.Handler) http.Handler {
+	if !s.dev {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT")
+		// Preflights carry no Authorization header, so they must answer before
+		// the token check rather than through it.
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // auth rejects anything without the exact bearer token, in constant time.
