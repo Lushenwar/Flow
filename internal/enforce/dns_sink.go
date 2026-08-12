@@ -213,6 +213,17 @@ func (d *DNSSink) Blocked(name string) bool {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+
+	// Nothing enforced means no reason to interfere with anyone's resolver.
+	if len(d.blocked) == 0 {
+		return false
+	}
+	// Refusing the DoH canary and the major endpoints keeps browsers on system
+	// DNS, which is this sink. Without it a browser resolves around every rule
+	// below and the whole layer is decorative.
+	if blockedForDoH(name) {
+		return true
+	}
 	for _, b := range d.blocked {
 		if name == b || strings.HasSuffix(name, "."+b) {
 			return true

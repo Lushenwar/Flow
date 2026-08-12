@@ -39,10 +39,28 @@ try {
 }
 finally { Pop-Location }
 
+# Report the signature honestly rather than staying quiet about it. An unsigned
+# binary that installs a LocalSystem service is something the user should know
+# they are trusting.
+foreach ($exe in "$root\flowd.exe", "$root\flowctl.exe") {
+    $sig = Get-AuthenticodeSignature $exe
+    if ($sig.Status -eq "Valid") {
+        Write-Host "Signed by $($sig.SignerCertificate.Subject)"
+    } else {
+        Write-Host "NOT SIGNED ($($sig.Status)). See sign.ps1 — signing needs a certificate this project does not ship."
+    }
+}
+
 Write-Host "Installing to $installDir..."
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item "$root\flowd.exe","$root\flowctl.exe" -Destination $installDir -Force
 Copy-Item "$root\extension" -Destination $installDir -Recurse -Force
+
+# Checksums let someone verify later that the installed binary is the one that
+# was built, which is the part of "signed" that is actually achievable here.
+Get-FileHash "$installDir\flowd.exe","$installDir\flowctl.exe" -Algorithm SHA256 |
+    ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
+    Set-Content "$installDir\checksums.txt" -Encoding ascii
 
 # Remove any previous registration first, so re-running is safe.
 & "$installDir\flowd.exe" uninstall 2>&1 | Out-Null
