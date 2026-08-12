@@ -12,8 +12,16 @@ import type {
  * error to work around.
  */
 
-const BASE =
-  process.env.NEXT_PUBLIC_FLOW_URL ?? "http://127.0.0.1:8787";
+/**
+ * Empty base means same-origin, which is the desktop shell: it serves these
+ * pages and proxies /api to the daemon, attaching the bearer token in Go. The
+ * token never enters this bundle.
+ *
+ * `npm run dev` sets both vars because the browser has no shell to proxy through
+ * and cannot read %ProgramData%\Flow\token — which is exactly why the browser
+ * build is a dev tool and not something you can hand to anyone.
+ */
+const BASE = process.env.NEXT_PUBLIC_FLOW_URL ?? "";
 const TOKEN = process.env.NEXT_PUBLIC_FLOW_TOKEN ?? "";
 
 export class ApiError extends Error {

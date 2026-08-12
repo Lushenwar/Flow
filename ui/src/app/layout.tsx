@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Tabs } from "@/components/Tabs";
+import { Shell } from "@/components/Shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,11 +11,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full">
-        {/* Every screen sits in one card. No window chrome beyond the tabs. */}
-        <main className="mx-auto max-w-[420px] p-6">
-          <Tabs />
-          <div className="card">{children}</div>
-        </main>
+        {/* Shell picks the layout: the card and its tabs, or the bare widget. */}
+        <Shell>{children}</Shell>
       </body>
     </html>
   );

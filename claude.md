@@ -120,17 +120,55 @@ recurrence fails the run instead of looking green.
 
 `[~]` only because `install.ps1` is not the signed installer the exit criterion asks for.
 
-**Still unverified:** Firefox and Edge, and reboot survival of a locked session.
+**The desktop shell is built.** `Flow.exe` is a Wails v2 window over the same static export, and
+`build-release.ps1 -Arch amd64` produces an NSIS installer that drops `flowd.exe`, `flowctl.exe` and
+the extension, then registers the service in one elevated pass. Before this, "run the app" meant Go,
+Node, a dev server, and a token pasted into an env var — there was no artifact to hand anyone.
+
+**The browser build could never have shipped, for a reason that only shows up when you package it.**
+`NEXT_PUBLIC_FLOW_TOKEN` is baked in at compile time, so a build is bound to one machine's token.
+The shell fixes this by not giving the frontend a token at all: `proxy.go` forwards `/api/*` to the
+daemon and attaches the bearer header in Go. The token never enters the bundle.
+
+That proxy also closes a hole that would have shipped broken. Wails serves the page from
+`wails.localhost`, so a direct fetch to `127.0.0.1:8787` is **cross-origin** — and `devCORS` sends
+headers only in dev builds, on the stated assumption that "in release the UI is same-origin". That
+assumption was false the moment the UI moved into a webview. Proxying makes it true again, which is
+the right direction: the alternative was widening the daemon's CORS in release to make the frontend's
+mistake work.
+
+**Mini mode** is the sticky-note timer: `/mini` renders the bare dial, and `SetMini` shrinks the
+window to 220×250, pins it always-on-top, and parks it in the top-right. Always-on-top applies *only*
+in mini mode — a full-size window that refuses to go behind anything is an irritant, not a
+commitment device. `Frameless` is build-time in Wails v2, so the full-size window draws its own title
+bar too. The Document PiP pop-out stays for the browser build and is hidden in the shell; two buttons
+for one job is worse than either.
+
+**Phase 7 stays `[~]`.** The installer is not signed — Authenticode needs a certificate this project
+does not have, so every user gets a SmartScreen warning on first run. Autostart for the window is
+also not wired (the *daemon* auto-starts; the window does not).
+
+**Still unverified:** Firefox and Edge, reboot survival of a locked session, and the installer itself
+— it has been built but never run, so the service-registration and teardown paths inside `project.nsi`
+are unexercised. Only `amd64` matters for real users; the local builds have been `arm64`.
 
 **Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
 is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
 does not stop it. Closing this needs the DoH bootstrap *hostnames* NXDOMAINed at the sink.
 Update this as you finish each step.
 
-**Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
+**Checks:** `go test . ./cmd/... ./internal/... && go vet . ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
 
-Scoped to `./cmd/...` and `./internal/...` rather than `./...` because `ui/node_modules` ships a
-stray Go package (`flatted/golang`) that `./...` picks up as part of this module.
+Named packages rather than `./...` because `ui/node_modules` ships a stray Go package
+(`flatted/golang`) that `./...` picks up as part of this module. The leading `.` is the Wails
+desktop shell at the module root — it holds the API proxy, so leaving it out of the check line
+means the one component that handles the bearer token is the one nothing verifies.
+
+**On a fresh clone, run `(cd ui && npm run build)` once before anything Go.** The root package
+embeds `ui/out`, and `go:embed` fails on a directory that does not exist. Nothing is committed there
+to prevent it because `next build` deletes and recreates that directory, so a placeholder would
+disappear on first use. `wails build` and `build-release.ps1` both build the frontend first and are
+unaffected.
 
 ---
 
@@ -329,8 +367,13 @@ A PR violating one does not merge, regardless of what it improves.
   mutable row HMAC-signed, key DPAPI-wrapped.
 * **Local API:** HTTP on `127.0.0.1` only, bearer token, JSON.
 * **UI:** Next.js (App Router, TypeScript strict, Tailwind, Lucide) static export, wrapped in
-  **Wails** for tray + autostart. Wails over Tauri because it's Go-native — no second toolchain for
-  what amounts to a tray icon and a window.
+  **Wails v2**. Wails over Tauri because it's Go-native — no second toolchain for what amounts to a
+  window. Two corrections to the original plan, both found by building it:
+  * **Wails v2 has no system tray.** That was v1, and it returns in v3. "Tray + autostart" is not
+    something v2 gives you; the always-on-top mini window covers the same need, and autostart would
+    be a `Run` key we write ourselves.
+  * **Wails v2 is single-window,** which is why mini mode is a *route* (`/mini`) that resizes and
+    pins the one window, rather than a second floating widget. Multi-window needs v3 (alpha).
 * **Process monitoring:** WMI `__InstanceCreationEvent` or a 1s process-list poll. Not ETW — Go's ETW
   story is weak and nobody launches Steam in under a second.
 
@@ -340,6 +383,11 @@ A PR violating one does not merge, regardless of what it improves.
 
 ```text
 flow/
+├── main.go               # Wails desktop shell — at the module root because
+├── app.go                #   go:embed cannot reach up out of its own directory,
+├── proxy.go              #   and the embedded assets live in ui/out
+├── wails.json
+├── build-release.ps1     # builds flowd+flowctl+app+NSIS installer for one arch
 ├── cmd/
 │   ├── flowd/            # service: main, SCM integration, watchdog
 │   └── flowctl/          # debug CLI (read-only in release builds)
@@ -366,7 +414,8 @@ flow/
 │   └── src/
 │       ├── app/
 │       │   ├── page.tsx        # Focus screen — the dial
-│       │   └── blocking/       # Blocking screen — baseline toggles
+│       │   ├── blocking/       # Blocking screen — baseline toggles
+│       │   └── mini/           # the pinned sticky-note timer (desktop only)
 │       ├── components/
 │       │   ├── Dial.tsx        # ring, countdown, commit/arming tap target
 │       │   ├── DurationChips.tsx
