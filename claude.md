@@ -148,13 +148,35 @@ for one job is worse than either.
 does not have, so every user gets a SmartScreen warning on first run. Autostart for the window is
 also not wired (the *daemon* auto-starts; the window does not).
 
+**Cross-browser:** Edge is Chromium and takes the same unpacked package. Firefox gets a four-line
+`browser.js` alias and `browser_specific_settings` in the manifest rather than a polyfill dependency —
+a supply-chain surface in a blocker people install to protect themselves is not worth four lines.
+Neither has been loaded and driven; only Chrome has.
+
 **Still unverified:** Firefox and Edge, reboot survival of a locked session, and the installer itself
 — it has been built but never run, so the service-registration and teardown paths inside `project.nsi`
 are unexercised. Only `amd64` matters for real users; the local builds have been `arm64`.
 
-**Known gap found during that run:** the WFP DoH blocklist is by IP, and Firefox's default endpoint
-is `mozilla.cloudflare-dns.com` — a CDN address, not `1.1.1.1`. Blocking the well-known resolver IPs
-does not stop it. Closing this needs the DoH bootstrap *hostnames* NXDOMAINed at the sink.
+**DoH gap closed at the name layer.** Blocking resolver IPs never touched Firefox, whose default
+endpoint `mozilla.cloudflare-dns.com` is an ordinary CDN address. The sink now refuses
+`use-application-dns.net` — Mozilla's documented canary, where NXDOMAIN means "this network manages
+DNS" and Firefox disables DoH by itself — plus the major endpoint hostnames for browsers with DoH
+switched on explicitly. A supported opt-out beats an arms race against endpoint lists, which is why
+`internal/enforce/doh.go` is short. A private DoH endpoint remains threat model row 11.
+
+**Bank verified on a real clock (2026-08-05).** A genuine 5-minute session credited exactly 60
+seconds, stayed at 60 across repeated polls, and a 1-minute spend emptied the effective set and then
+hard re-locked to `preset.adult` when the window closed. Not an injected clock.
+
+**Reboot survival is the one criterion still unexercised.** `reboot-test.ps1 -Arm` / `-Check` exists
+for it. It does not reboot for you: a script that restarts someone's machine because a test wanted it
+to is not a test, it is an outage.
+
+**Signing:** `sign.ps1` does Authenticode with timestamping; what is missing is a certificate, which
+is a purchase rather than a coding task. It deliberately does not self-sign — a self-signed binary
+still trips SmartScreen and still reads "Unknown Publisher" while looking signed to anyone checking a
+checkbox, which is worse than honestly unsigned. `install.ps1` reports the real signature status and
+writes SHA256 checksums.
 Update this as you finish each step.
 
 **Checks:** `go test . ./cmd/... ./internal/... && go vet . ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`

@@ -1,3 +1,4 @@
+import { api as browserAPI, sessionStore } from "./browser.js";
 import { createCoordinator } from "./coordinator.js";
 
 /**
@@ -26,28 +27,28 @@ const flow = createCoordinator({
     if (!res.ok) throw new Error(String(res.status));
     return res.json();
   },
-  getTabs: () => chrome.tabs.query({}),
-  getTab: (id) => chrome.tabs.get(id),
-  updateTab: (id, url) => chrome.tabs.update(id, { url }),
+  getTabs: () => browserAPI.tabs.query({}),
+  getTab: (id) => browserAPI.tabs.get(id),
+  updateTab: (id, url) => browserAPI.tabs.update(id, { url }),
   // MV3 suspends the service worker after ~30s idle and re-runs this file on the
   // next event. session storage survives that, so a wake starts with the last
   // known rules instead of evaluating against null and letting the navigation
   // that woke us sail through.
-  loadCache: async () => (await chrome.storage.session.get("rules")).rules,
-  saveCache: (r) => chrome.storage.session.set({ rules: r }),
+  loadCache: async () => (await sessionStore.get("rules")).rules,
+  saveCache: (r) => sessionStore.set({ rules: r }),
   blockedUrlFor: (reason, original) =>
-    chrome.runtime.getURL("blocked.html") +
+    browserAPI.runtime.getURL("blocked.html") +
     "?reason=" + encodeURIComponent(reason) +
     "&from=" + encodeURIComponent(original),
 });
 
-chrome.tabs.onUpdated.addListener((_id, info, tab) => {
+browserAPI.tabs.onUpdated.addListener((_id, info, tab) => {
   if (info.status === "loading" || info.url) flow.checkTab(tab);
 });
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+browserAPI.tabs.onActivated.addListener(async ({ tabId }) => {
   try {
-    await flow.checkTab(await chrome.tabs.get(tabId));
+    await flow.checkTab(await browserAPI.tabs.get(tabId));
   } catch {
     // Tab vanished.
   }
@@ -56,8 +57,8 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 // The alarm wakes the worker so an idle tab is caught within a minute even with
 // no interaction; the interval covers the case where the worker is already
 // alive, and every tab event checks immediately.
-chrome.alarms.create("poll", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(() => flow.refresh());
+browserAPI.alarms.create("poll", { periodInMinutes: 1 });
+browserAPI.alarms.onAlarm.addListener(() => flow.refresh());
 setInterval(() => flow.refresh(), POLL_MS);
 
 // A browser restart is the warm-tab case again: Chrome restores the tabs from

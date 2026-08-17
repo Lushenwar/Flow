@@ -138,7 +138,11 @@ export default function FocusScreen() {
         </button>
       )}
 
-      {/* Browser only. The desktop shell has mini mode, which is the same idea
+      {/* The same dial in a window the OS keeps on top. Inert on purpose: it is
+          there to show you the countdown, not to be a second place to commit or
+          abort from.
+
+          Browser only. The desktop shell has mini mode, which is the same idea
           without needing a tab to stay open behind it, so offering both would be
           two buttons for one job. */}
       {!isDesktop && (
