@@ -108,10 +108,15 @@ export const api = {
     }),
 
   schedules: () => call<ScheduleRow[]>("/api/schedules"),
-  putSchedule: (s: Partial<ScheduleRow>) =>
+  /** Refused with 409 would_weaken while the schedule's own window is live. */
+  putSchedule: (s: Partial<ScheduleRow> & { days?: number[] }) =>
     call<ScheduleRow[]>("/api/schedules", {
       method: "POST",
       body: JSON.stringify(s),
+    }),
+  deleteSchedule: (id: string) =>
+    call<ScheduleRow[]>(`/api/schedules/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
 
   /** The user's own list. Adding strengthens and always works; removing is

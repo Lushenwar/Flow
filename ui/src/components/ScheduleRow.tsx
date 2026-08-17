@@ -1,12 +1,15 @@
 "use client";
 
-import { listName, scheduleWindow, type ScheduleRow } from "@/lib/state";
+import { Pencil, Trash2 } from "lucide-react";
+import { dayLabel, listName, scheduleWindow, type ScheduleRow } from "@/lib/state";
 
 interface Props {
   row: ScheduleRow;
   last: boolean;
   busy: boolean;
   onToggle: (enabled: boolean) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 /**
@@ -19,7 +22,14 @@ interface Props {
  * is live, the rules it contributes are covered by the same union as everything
  * else and cannot be weakened mid-session.
  */
-export function ScheduleRowView({ row, last, busy, onToggle }: Props) {
+export function ScheduleRowView({
+  row,
+  last,
+  busy,
+  onToggle,
+  onEdit,
+  onDelete,
+}: Props) {
   return (
     <div
       className="flex items-center justify-between py-[10px]"
@@ -30,6 +40,8 @@ export function ScheduleRowView({ row, last, busy, onToggle }: Props) {
         <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
           {scheduleWindow(row, Intl.DateTimeFormat().resolvedOptions().timeZone)}
           {" · "}
+          {dayLabel(row.days)}
+          {" · "}
           {row.listIds.map(listName).join(", ").toLowerCase()}
         </span>
       </span>
@@ -39,6 +51,33 @@ export function ScheduleRowView({ row, last, busy, onToggle }: Props) {
           <span className="text-[11px]" style={{ color: "var(--accent)" }}>
             on now
           </span>
+        )}
+        {/* Absent, not disabled, while the window is live: the daemon refuses
+            the edit anyway, and a control that cannot do anything is worse than
+            no control. */}
+        {!row.active && onEdit && (
+          <button
+            type="button"
+            aria-label={`Edit ${row.name}`}
+            onClick={onEdit}
+            disabled={busy}
+            className="rounded p-1 disabled:opacity-40"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <Pencil size={12} />
+          </button>
+        )}
+        {!row.active && onDelete && (
+          <button
+            type="button"
+            aria-label={`Delete ${row.name}`}
+            onClick={onDelete}
+            disabled={busy}
+            className="rounded p-1 disabled:opacity-40"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <Trash2 size={12} />
+          </button>
         )}
         <button
           type="button"

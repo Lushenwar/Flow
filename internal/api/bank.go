@@ -78,9 +78,17 @@ type schedulePut struct {
 	Start   string   `json:"start"`
 	End     string   `json:"end"`
 	Enabled bool     `json:"enabled"`
+	// Days the window may START on, 0=Sunday. Empty means every day. The field
+	// existed on the model and not on the wire, so a schedule created over HTTP
+	// was every-day whatever the caller sent.
+	Days []int `json:"days,omitempty"`
 }
 
 // putSchedule creates or replaces a schedule, pinning the current zone.
+//
+// Refused while the schedule's own window is live: its rules are in the
+// effective set right now, and rewriting its hours would weaken enforcement on
+// the same terms a baseline toggle would.
 func (s *Server) putSchedule(w http.ResponseWriter, r *http.Request) {
 	var req schedulePut
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -90,6 +98,10 @@ func (s *Server) putSchedule(w http.ResponseWriter, r *http.Request) {
 	if req.ID == "" {
 		req.ID = r.PathValue("id")
 	}
+	if req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, errBody("missing_id"))
+		return
+	}
 
 	sc, err := schedule.New(req.ID, req.Name, req.ListIDs, req.Start, req.End, time.Local)
 	if err != nil {
@@ -97,8 +109,32 @@ func (s *Server) putSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc.Enabled = req.Enabled
+	for _, d := range req.Days {
+		if d < 0 || d > 6 {
+			writeJSON(w, http.StatusBadRequest, errBody("bad_day"))
+			return
+		}
+		sc.Days = append(sc.Days, time.Weekday(d))
+	}
 
 	if err := s.sess.PutSchedule(sc); err != nil {
+		if errors.Is(err, session.ErrWouldWeaken) {
+			writeJSON(w, http.StatusConflict, errBody("would_weaken"))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
+		return
+	}
+	s.schedules(w, r)
+}
+
+// deleteSchedule removes one, and refuses while its window is live.
+func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
+	if err := s.sess.DeleteSchedule(r.PathValue("id")); err != nil {
+		if errors.Is(err, session.ErrWouldWeaken) {
+			writeJSON(w, http.StatusConflict, errBody("would_weaken"))
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
 		return
 	}

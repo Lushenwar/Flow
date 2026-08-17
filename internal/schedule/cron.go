@@ -167,6 +167,17 @@ type Set struct {
 	Schedules []Schedule `json:"schedules"`
 }
 
+// Remove deletes by id, reporting whether anything was there.
+func (s *Set) Remove(id string) bool {
+	for i, existing := range s.Schedules {
+		if existing.ID == id {
+			s.Schedules = append(s.Schedules[:i], s.Schedules[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Set) Add(sc Schedule) {
 	for i, existing := range s.Schedules {
 		if existing.ID == sc.ID {

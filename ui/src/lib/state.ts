@@ -54,6 +54,23 @@ export interface ScheduleRow {
   tz: string;
   enabled: boolean;
   active: boolean;
+  /** 0 = Sunday. Empty means every day. */
+  days?: number[];
+}
+
+export const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
+
+/** "every day", or the days it may start on. A window that crosses midnight
+ *  belongs to the day it STARTED on, which is why this never says "and Sunday
+ *  morning". */
+export function dayLabel(days?: number[]): string {
+  if (!days || days.length === 0 || days.length === 7) return "every day";
+  const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return days
+    .slice()
+    .sort((a, b) => a - b)
+    .map((d) => names[d] ?? "?")
+    .join(", ");
 }
 
 export interface BankView {

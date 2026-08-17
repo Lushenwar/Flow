@@ -447,13 +447,52 @@ func (m *Manager) Schedules() ([]schedule.Schedule, []string) {
 }
 
 // PutSchedule adds or replaces a schedule.
+//
+// Editing one whose window is currently live is refused: the rules it
+// contributes are in the effective set right now, and rewriting its hours would
+// weaken enforcement on the same terms a baseline toggle would. There is no
+// delay to invent here — the window ends on its own, which is friction the clock
+// already provides.
 func (m *Manager) PutSchedule(s schedule.Schedule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.scheduleLiveLocked(s.ID) {
+		return ErrWouldWeaken
+	}
 	m.schedules.Add(s)
 	m.event("schedule_saved", fmt.Sprintf(`{"id":%q,"enabled":%t}`, s.ID, s.Enabled))
 	m.applyLocked()
 	return m.persistLocked()
+}
+
+// DeleteSchedule removes a schedule, and refuses while its window is live.
+//
+// Direction-aware like every other mutation: deleting an inactive schedule
+// weakens nothing, because it is not enforcing anything yet.
+func (m *Manager) DeleteSchedule(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.scheduleLiveLocked(id) {
+		return ErrWouldWeaken
+	}
+	if !m.schedules.Remove(id) {
+		return nil // not there; nothing to do
+	}
+	m.event("schedule_deleted", fmt.Sprintf(`{"id":%q}`, id))
+	m.applyLocked()
+	return m.persistLocked()
+}
+
+// scheduleLiveLocked reports whether a schedule's window is in force right now.
+func (m *Manager) scheduleLiveLocked(id string) bool {
+	for _, s := range m.schedules.Active(m.clock.Wall()) {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Baseline returns a snapshot of the rules, ticked so a fired disable is never

@@ -64,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/schedules", s.schedules)
 		mux.HandleFunc("POST /api/schedules", s.putSchedule)
 		mux.HandleFunc("PUT /api/schedules/{id}", s.putSchedule)
+		mux.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
 	}
 
 	// /api/rules sits outside the token check. See the comment on rules() — the

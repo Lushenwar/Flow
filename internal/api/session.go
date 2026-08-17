@@ -27,6 +27,7 @@ type Sessions interface {
 	RemoveCustom(raw string) error
 	Schedules() ([]schedule.Schedule, []string)
 	PutSchedule(s schedule.Schedule) error
+	DeleteSchedule(id string) error
 	Commit(p session.Plan) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)
