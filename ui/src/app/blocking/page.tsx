@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { AutostartRow } from "@/components/AutostartRow";
+import { BankRow } from "@/components/BankRow";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { CustomSites } from "@/components/CustomSites";
 import { History } from "@/components/History";
 import { ScheduleRowView } from "@/components/ScheduleRow";
 import { ApiError, api } from "@/lib/flow-client";
 import {
-  bankLabel,
   sessionOwnedIds,
   type BankView,
   type ScheduleRow,
@@ -147,11 +147,17 @@ export default function BlockingScreen() {
         </div>
       )}
 
-      {bank && (
-        <p className="text-[11px] mt-4" style={{ color: "var(--text-muted)" }}>
-          {bankLabel(bank)}
-        </p>
-      )}
+      {/* idle comes from the daemon's state, never from a local guess: a spend
+          is refused outside IDLE and the UI only reports that, it does not
+          decide it. */}
+      <BankRow
+        bank={bank}
+        idle={state.session.state === "IDLE" || state.session.state === "COMPLETE"}
+        onSpent={() => {
+          api.bank().then(setBank).catch(() => {});
+          refresh();
+        }}
+      />
 
       {/* Renders nothing in a browser: there is no window to open at login. */}
       <AutostartRow />
