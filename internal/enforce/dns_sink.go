@@ -83,7 +83,20 @@ func (d *DNSSink) Apply(eff Effective) error {
 	running, pinned := d.conn != nil, d.pinned
 	d.mu.Unlock()
 
+	// An empty set means stop, which is what Drifted already reports. Returning
+	// nil here instead left the two disagreeing forever: Drifted said "running
+	// with nothing to block is drift", Apply changed nothing, and reconcile wrote
+	// a reconcile_repaired event every 3 seconds claiming a repair that never
+	// happened. A bank spend — which empties the union by design — filled the
+	// Blocking screen's history with repairs at the one moment nothing was
+	// being enforced.
+	//
+	// Stop() unpins the resolver from its on-disk backup before closing the
+	// socket, so this never strands an adapter on a sink that is gone.
 	if len(want) == 0 {
+		if running {
+			return d.Stop()
+		}
 		return nil
 	}
 	if !running {
