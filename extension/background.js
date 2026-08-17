@@ -1,5 +1,6 @@
 import { api as browserAPI, sessionStore } from "./browser.js";
 import { createCoordinator } from "./coordinator.js";
+import { createRuleFetcher } from "./daemon.js";
 
 /**
  * Thin adapter: chrome APIs in, coordinator out. All the logic worth testing
@@ -18,15 +19,15 @@ import { createCoordinator } from "./coordinator.js";
  * the browser would strand someone whose daemon crashed.
  */
 
-const DAEMON = "http://127.0.0.1:8787/api/rules";
 const POLL_MS = 2000;
 
 const flow = createCoordinator({
-  fetchJSON: async () => {
-    const res = await fetch(DAEMON, { cache: "no-store" });
+  // Probes a small port range rather than assuming 8787 — see daemon.js.
+  fetchJSON: createRuleFetcher(async (port) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/rules`, { cache: "no-store" });
     if (!res.ok) throw new Error(String(res.status));
     return res.json();
-  },
+  }),
   getTabs: () => browserAPI.tabs.query({}),
   getTab: (id) => browserAPI.tabs.get(id),
   updateTab: (id, url) => browserAPI.tabs.update(id, { url }),

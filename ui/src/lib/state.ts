@@ -138,9 +138,13 @@ export function eventLabel(kind: string): string | null {
   return labels[kind] ?? null;
 }
 
-/** Newest first, unlabelled kinds removed. */
+/**
+ * Unlabelled kinds removed. Order is the daemon's — /api/events returns newest
+ * first, because the limit has to be applied in SQL and a LIMIT only keeps the
+ * right end if the ORDER BY already points that way.
+ */
 export function visibleEvents(events: EventRow[]): EventRow[] {
-  return events.filter((e) => eventLabel(e.kind) !== null).reverse();
+  return events.filter((e) => eventLabel(e.kind) !== null);
 }
 
 export interface AppState {

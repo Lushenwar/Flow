@@ -194,6 +194,56 @@ func TestSinkDriftOnRuleSetChange(t *testing.T) {
 	}
 }
 
+// Apply and Drifted have to agree about the empty set, or reconcile repairs
+// forever. Drifted said "running with nothing blocked is drift"; Apply returned
+// without stopping; every 3s tick wrote a reconcile_repaired event for a repair
+// that never happened. A bank spend empties the union by design, so this fired
+// during the one window where nothing is supposed to be enforced.
+func TestEmptyRuleSetStopsTheSinkInsteadOfRepairingForever(t *testing.T) {
+	sink := startSink(t, Union(cat, []Rule{{"preset.video", Session}}))
+	port := sink.Port()
+
+	empty := Union(cat, nil)
+	if drifted, _ := sink.Drifted(empty); !drifted {
+		t.Fatal("a running sink with nothing to block is drift")
+	}
+	if err := sink.Apply(empty); err != nil {
+		t.Fatal(err)
+	}
+
+	// The repair has to actually settle it. This is the whole bug.
+	if drifted, _ := sink.Drifted(empty); drifted {
+		t.Fatal("still drifted after Apply — reconcile would log a repair every 3s, forever")
+	}
+	if sink.Port() != 0 {
+		t.Fatal("sink still bound")
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+	if err != nil {
+		t.Fatalf("port still held: %v", err)
+	}
+	conn.Close()
+
+	// And it must come back when something is blocked again.
+	if err := sink.Apply(Union(cat, []Rule{{"preset.video", Session}})); err != nil {
+		t.Fatal(err)
+	}
+	if rc := ask(t, sink, "youtube.com"); rc != dnsmessage.RCodeNameError {
+		t.Fatalf("sink did not restart: %v", rc)
+	}
+}
+
+// Applying an empty set to a sink that was never started must not error.
+func TestEmptyRuleSetOnAStoppedSinkIsANoOp(t *testing.T) {
+	d := NewDNSSink("127.0.0.1:0")
+	if err := d.Apply(Union(cat, nil)); err != nil {
+		t.Fatalf("nothing to stop should not be an error: %v", err)
+	}
+	if drifted, _ := d.Drifted(Union(cat, nil)); drifted {
+		t.Fatal("a stopped sink with nothing to block is not drift")
+	}
+}
+
 func TestSinkStopReleasesThePort(t *testing.T) {
 	sink := startSink(t, Union(cat, []Rule{{"preset.video", Session}}))
 	port := sink.Port()

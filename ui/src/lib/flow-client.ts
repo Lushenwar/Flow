@@ -91,7 +91,10 @@ export const api = {
     }),
   ack: () => call("/api/session/ack", { method: "POST" }),
 
-  events: (since = 0) => call<EventRow[]>(`/api/events?since=${since}`),
+  /** Newest first. The limit is capped daemon-side; asking for everything is
+   *  not an option the API offers. */
+  events: (limit = 20, since = 0) =>
+    call<EventRow[]>(`/api/events?since=${since}&limit=${limit}`),
 
   bank: () => call<BankView>("/api/bank"),
   spend: (minutes: number) =>

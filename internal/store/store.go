@@ -103,9 +103,26 @@ type Event struct {
 	Data string `json:"data"`
 }
 
-// Events returns events with id > since, oldest first.
-func (s *Store) Events(since int64) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT id,ts,kind,data,sig FROM events WHERE id>? ORDER BY id`, since)
+// DefaultEventLimit bounds an unasked-for read. The history list renders eight
+// rows; nothing in the app has ever needed the whole log in one response.
+const DefaultEventLimit = 100
+
+// Events returns the newest events with id > since, newest first.
+//
+// The limit is applied in SQL, not by the caller, because the cost that matters
+// is the HMAC verification of every returned row. Without it this walked and
+// re-verified the entire history on every call — and the UI called it every five
+// seconds to draw eight lines.
+//
+// A limit <= 0 means DefaultEventLimit. There is deliberately no way to ask for
+// everything over HTTP.
+func (s *Store) Events(since int64, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = DefaultEventLimit
+	}
+	rows, err := s.db.Query(
+		`SELECT id,ts,kind,data,sig FROM events WHERE id>? ORDER BY id DESC LIMIT ?`,
+		since, limit)
 	if err != nil {
 		return nil, err
 	}

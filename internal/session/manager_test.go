@@ -169,7 +169,7 @@ func TestDriftIsLoggedAndPenaltyCapped(t *testing.T) {
 	m.checkDriftLocked()
 	m.mu.Unlock()
 
-	evs, err := st.Events(0)
+	evs, err := st.Events(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +284,168 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	balance2, _, _ := m2.Bank()
 	if balance2 != 10*time.Minute {
 		t.Fatalf("balance %v after restart, want 10m — not re-credited, not lost", balance2)
+	}
+}
+
+// A daemon that was down through the whole session lands in COMPLETE in one
+// tick, which is correct. The log has to record what it crossed on the way:
+// session_FOCUS is the moment the lock became irreversible, and a tamper record
+// that shows only where it ended up is missing the part that matters.
+func TestACascadedTransitionLogsEveryStateItCrossed(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Commit(ModeCommitment, 25*time.Minute, nil, DefaultGrace, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The machine is off for two hours: grace and the whole session elapse.
+	c.tick(2 * time.Hour)
+	if got := m.Snapshot().State; got != Complete {
+		t.Fatalf("state %s, want COMPLETE", got)
+	}
+
+	evs, err := st.Events(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range evs {
+		seen[e.Kind] = true
+	}
+	for _, kind := range []string{"session_FOCUS", "session_COMPLETE"} {
+		if !seen[kind] {
+			t.Fatalf("%s missing from the log: %v", kind, seen)
+		}
+	}
+}
+
+// Moving the machine's timezone under an active scheduled lock is a tamper
+// event. The window already holds — ActiveAt evaluates in the pinned offset —
+// but the log has to say so, and it could not: the check compared
+// time.Local.String() to the captured TZ name, both of which are the literal
+// "Local" on Windows, so the branch was dead on the platform it defends.
+func TestTimezoneChangeUnderAnActiveScheduleIsLogged(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	// 19:00 UTC. The machine claims UTC; the schedule was pinned at UTC-5.
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// Pinned to UTC-5, where 19:00 UTC is 14:00 — inside a 13:00-16:00 window.
+	m.mu.Lock()
+	m.schedules.Add(schedule.Schedule{
+		ID: "sched.pinned", Name: "Pinned", ListIDs: []string{"preset.delivery"},
+		Start: "13:00", End: "16:00", TZ: "Local", OffsetSeconds: -5 * 3600, Enabled: true,
+	})
+	m.checkTimezoneLocked()
+	m.mu.Unlock()
+
+	evs, err := st.Events(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if e.Kind == "schedule_timezone_changed" {
+			return
+		}
+	}
+	t.Fatal("a timezone change under an active lock was not logged")
+}
+
+// The corollary: a machine that has not moved must not log a tamper event on
+// every single startup.
+func TestMatchingTimezoneLogsNothing(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.schedules.Add(schedule.Schedule{
+		ID: "sched.utc", Name: "UTC", ListIDs: []string{"preset.delivery"},
+		Start: "18:00", End: "21:00", TZ: "UTC", OffsetSeconds: 0, Enabled: true,
+	})
+	m.checkTimezoneLocked()
+	m.mu.Unlock()
+
+	evs, _ := st.Events(0, 0)
+	for _, e := range evs {
+		if e.Kind == "schedule_timezone_changed" {
+			t.Fatal("logged a tamper event for a machine that never moved")
+		}
+	}
+}
+
+// A spend suspends what you earned the right to suspend, and nothing else.
+// Baseline is not "off": the dial reading "not focusing" never means nothing is
+// enforced, and neither does an open recreation window.
+func TestSpendSuspendsSchedulesButNeverBaseline(t *testing.T) {
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC) // inside the delivery window
+	m, rec := newManager(t, c, t.TempDir())
+
+	del, err := schedule.New("sched.delivery", "Delivery", []string{"preset.delivery"}, "18:00", "21:00", time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PutSchedule(del); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("setup: the schedule should be in force")
+	}
+
+	m.mu.Lock()
+	m.bank.BalanceSeconds = 600
+	m.mu.Unlock()
+	if err := m.SpendBank(10 * time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := rec.last.Domains["ubereats.com"]; ok {
+		t.Fatal("a spend must suspend the schedule you paid to suspend")
+	}
+	if got := rec.last.Domains["pornhub.com"]; got != enforce.Baseline {
+		t.Fatal("a spend unblocked baseline — earning focus minutes must not open adult content")
+	}
+
+	// And the schedule comes back when the window closes.
+	c.tick(10 * time.Minute)
+	m.mu.Lock()
+	m.tickLocked()
+	m.applyLocked()
+	m.mu.Unlock()
+	if _, ok := rec.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("enforcement must hard re-lock at expiry")
 	}
 }
 

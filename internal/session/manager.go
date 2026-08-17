@@ -240,10 +240,16 @@ func (m *Manager) transition(kind string, fn func(Session) (Session, error)) (Se
 }
 
 func (m *Manager) tickLocked() bool {
-	next, moved := m.sess.Tick(m.clock, nil)
+	next, passed := m.sess.Tick(m.clock, nil)
+	moved := len(passed) > 0
 	if moved {
 		m.sess = next
-		m.event("session_"+string(next.State), "{}")
+		// One event per state crossed, not just the landing state. A cascade
+		// through ARMING -> FOCUS -> COMPLETE has to leave FOCUS in the log:
+		// that is the moment the lock became irreversible.
+		for _, st := range passed {
+			m.event("session_"+string(st), "{}")
+		}
 		m.creditLocked()
 	}
 	if m.bank.Tick(m.clock, nil) {
@@ -308,16 +314,28 @@ func (m *Manager) checkDriftLocked() {
 
 // rulesLocked is the union input: baseline ∪ session ∪ schedules.
 //
-// A live bank spend is the single exception in the whole app — it returns
-// nothing, opening the blocklist for the window that was paid for up front. It
-// can only start from IDLE and cannot be cancelled, so it never weakens a lock.
+// A live bank spend is the single exception in the whole app — it suppresses
+// the rules you earned the right to suspend, for the window that was paid for
+// up front. It can only start from IDLE and cannot be cancelled, so it never
+// weakens a lock.
+//
+// It suppresses SESSION and SCHEDULE rules only. Baseline survives a spend,
+// because baseline is not "off" and never was:
+//
+//	A user in IDLE with gambling and adult content on baseline is being
+//	protected right now.
+//
+// Earning minutes by focusing buys back the things you are avoiding for
+// productivity. It does not buy back the things you asked to be permanently
+// protected from — collapsing the two would make the bank a supported path to
+// the one outcome the app exists to prevent.
 func (m *Manager) rulesLocked() []enforce.Rule {
-	if m.bank.Spending(m.clock, nil) {
-		return nil
-	}
 	var rules []enforce.Rule
 	for _, id := range m.baseline.EnabledIDs() {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Baseline})
+	}
+	if m.bank.Spending(m.clock, nil) {
+		return rules
 	}
 	for _, id := range m.schedules.ActiveListIDs(m.clock.Wall()) {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Schedule})
@@ -650,17 +668,25 @@ func (m *Manager) loadExtrasLocked() {
 // No enforcement change is needed: ActiveAt always evaluates in the pinned zone,
 // so the window already holds for its full length. The event exists because the
 // log is more useful than the punishment.
+//
+// Compared by OFFSET, not by name. Names cannot do this job on the platform this
+// runs on: time.Local.String() returns the literal "Local" on Windows, and so
+// does the TZ captured at creation, so `s.TZ != system` was "Local" != "Local"
+// and the branch was dead — the detection for the exact attack it was written
+// for could never fire. That is the same trap the pinning itself already fell
+// into and fixed with OffsetSeconds; only the logging half was left behind.
 func (m *Manager) checkTimezoneLocked() {
 	now := m.clock.Wall()
-	system := time.Local.String()
+	_, systemOffset := now.Zone()
 	for _, s := range m.schedules.Active(now) {
-		if s.TZ != system {
-			m.event("schedule_timezone_changed", fmt.Sprintf(
-				`{"id":%q,"pinned":%q,"system":%q,"holdsUntil":%q}`,
-				s.ID, s.TZ, system, s.EndsAt(now).Format(time.RFC3339)))
-			log.Printf("schedule %s pinned to %s but system is %s; holding until %s",
-				s.ID, s.TZ, system, s.EndsAt(now).Format(time.RFC3339))
+		if s.OffsetSeconds == systemOffset {
+			continue
 		}
+		m.event("schedule_timezone_changed", fmt.Sprintf(
+			`{"id":%q,"pinnedOffset":%d,"systemOffset":%d,"holdsUntil":%q}`,
+			s.ID, s.OffsetSeconds, systemOffset, s.EndsAt(now).Format(time.RFC3339)))
+		log.Printf("schedule %s pinned to UTC%+d but system is UTC%+d; holding until %s",
+			s.ID, s.OffsetSeconds/3600, systemOffset/3600, s.EndsAt(now).Format(time.RFC3339))
 	}
 }
 

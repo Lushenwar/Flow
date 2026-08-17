@@ -3,8 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -104,11 +107,47 @@ func TestEventsSince(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("want 2 events, got %d", len(all))
 	}
+	// Newest first: the limit is applied in SQL, so the ordering is what decides
+	// which end a LIMIT keeps.
+	if all[0].Kind != "service_stop" {
+		t.Fatalf("want newest first, got %+v", all)
+	}
 
 	var rest []store.Event
 	json.NewDecoder(get(t, h, "/api/events?since="+strconv.FormatInt(first, 10), "secret").Body).Decode(&rest)
 	if len(rest) != 1 || rest[0].Kind != "service_stop" {
 		t.Fatalf("since filter wrong: %+v", rest)
+	}
+}
+
+// The history list renders eight rows. This used to return the entire log,
+// HMAC-verified row by row, every five seconds, to draw them.
+func TestEventsAreBoundedAndCannotBeAskedForInFull(t *testing.T) {
+	h, st, _ := newServer(t)
+	for i := 0; i < store.DefaultEventLimit+50; i++ {
+		if _, err := st.Append("session_commit", "{}"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var unasked []store.Event
+	json.NewDecoder(get(t, h, "/api/events", "secret").Body).Decode(&unasked)
+	if len(unasked) != store.DefaultEventLimit {
+		t.Fatalf("unbounded read returned %d rows, want the %d cap",
+			len(unasked), store.DefaultEventLimit)
+	}
+
+	var small []store.Event
+	json.NewDecoder(get(t, h, "/api/events?limit=5", "secret").Body).Decode(&small)
+	if len(small) != 5 {
+		t.Fatalf("limit=5 returned %d", len(small))
+	}
+
+	// A caller must not be able to talk its way past the cap.
+	var greedy []store.Event
+	json.NewDecoder(get(t, h, "/api/events?limit=100000", "secret").Body).Decode(&greedy)
+	if len(greedy) > store.DefaultEventLimit {
+		t.Fatalf("limit=100000 returned %d rows — the cap is not a cap", len(greedy))
 	}
 }
 
@@ -175,6 +214,78 @@ func TestReleaseHasNoCORS(t *testing.T) {
 	h := New(st, "secret", false, fakeEnforcement{}, nil).Handler()
 	if got := get(t, h, "/api/health", "secret").Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("release build set CORS to %q", got)
+	}
+}
+
+// Listen used to fall back to an ephemeral port when the requested one was
+// taken. proxy.go and flowctl read the port file and were fine; the extension
+// cannot read files, kept polling 8787, and silently stopped enforcing while the
+// daemon went on reporting itself healthy. A bounded walk keeps it findable.
+func TestListenWalksForwardWhenThePortIsTaken(t *testing.T) {
+	dir := t.TempDir()
+	portFile := filepath.Join(dir, "port")
+
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+	taken := base.Addr().(*net.TCPAddr).Port
+
+	ln, err := Listen(taken, portFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	got := ln.Addr().(*net.TCPAddr).Port
+	if got == taken {
+		t.Fatal("bound a port that was already held")
+	}
+	if got < taken || got >= taken+PortSearch {
+		t.Fatalf("landed on %d, outside %d-%d — the extension only probes that range",
+			got, taken, taken+PortSearch-1)
+	}
+
+	// The port file still has to be right, because it is what every other
+	// client reads.
+	b, err := os.ReadFile(portFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(b)) != strconv.Itoa(got) {
+		t.Fatalf("port file says %q, listening on %d", b, got)
+	}
+}
+
+// A machine that cannot bind anything in range is a broken install. Erroring is
+// better than an ephemeral port nothing can find.
+func TestListenFailsRatherThanHidingOnAnEphemeralPort(t *testing.T) {
+	dir := t.TempDir()
+
+	start, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer start.Close()
+	base := start.Addr().(*net.TCPAddr).Port
+
+	// Hold the whole search range.
+	for p := base + 1; p < base+PortSearch; p++ {
+		held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			t.Skipf("could not stage a full range: %v", err)
+		}
+		defer held.Close()
+	}
+
+	ln, err := Listen(base, filepath.Join(dir, "port"))
+	if err == nil {
+		ln.Close()
+		t.Fatal("bound something outside the range the extension can find")
+	}
+	if !strings.Contains(err.Error(), "no free port") {
+		t.Fatalf("unhelpful error: %v", err)
 	}
 }
 

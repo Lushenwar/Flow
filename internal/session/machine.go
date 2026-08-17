@@ -136,16 +136,23 @@ func (s Session) Release(c Clock, serverNow *time.Time) (Session, error) {
 // It cascades: a daemon that was down long enough for both the grace window and
 // the whole session to elapse must land in COMPLETE, not sit in FOCUS until the
 // next tick. Bounded because the machine has finitely many states.
-func (s Session) Tick(c Clock, serverNow *time.Time) (Session, bool) {
-	moved := false
+//
+// Returns every state passed through, not just where it landed. The caller logs
+// one event per entry: a reboot recovery that crosses ARMING -> FOCUS ->
+// COMPLETE used to write a single session_COMPLETE row, so the moment the lock
+// actually became irreversible was missing from a log whose whole job is being a
+// defensible record. Empty means nothing moved.
+func (s Session) Tick(c Clock, serverNow *time.Time) (Session, []State) {
+	var passed []State
 	for i := 0; i < len(allStates); i++ {
 		next, stepped := s.step(c, serverNow)
 		if !stepped {
 			break
 		}
-		s, moved = next, true
+		s = next
+		passed = append(passed, s.State)
 	}
-	return s, moved
+	return s, passed
 }
 
 var allStates = []State{Idle, Arming, Focus, Releasing, Complete}
