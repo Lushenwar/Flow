@@ -9,7 +9,7 @@ import (
 
 func commit(t *testing.T, c Clock) Session {
 	t.Helper()
-	s, err := New().Commit(c, ModeCommitment, 25*time.Minute, []string{"preset.video"}, DefaultGrace, false)
+	s, err := New().Commit(c, Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: []string{"preset.video"}, Grace: DefaultGrace, Penalty: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestAbortIsFreeInArmingAndImpossibleAfter(t *testing.T) {
 func TestNoSecondSessionWhileOneIsActive(t *testing.T) {
 	c := newFake()
 	s := commit(t, c)
-	if _, err := s.Commit(c, ModeCommitment, 25*time.Minute, nil, DefaultGrace, false); !errors.Is(err, ErrActive) {
+	if _, err := s.Commit(c, Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false}); !errors.Is(err, ErrActive) {
 		t.Fatalf("got %v, want active", err)
 	}
 }
@@ -82,12 +82,12 @@ func TestNoSecondSessionWhileOneIsActive(t *testing.T) {
 func TestDurationBounds(t *testing.T) {
 	c := newFake()
 	for _, d := range []time.Duration{time.Minute, 4 * time.Minute, 481 * time.Minute, 0, -time.Hour} {
-		if _, err := New().Commit(c, ModeCommitment, d, nil, DefaultGrace, false); !errors.Is(err, ErrDuration) {
+		if _, err := New().Commit(c, Plan{Mode: ModeCommitment, Duration: d, ListIDs: nil, Grace: DefaultGrace, Penalty: false}); !errors.Is(err, ErrDuration) {
 			t.Errorf("duration %v accepted", d)
 		}
 	}
 	for _, d := range []time.Duration{5 * time.Minute, 25 * time.Minute, 480 * time.Minute} {
-		if _, err := New().Commit(c, ModeCommitment, d, nil, DefaultGrace, false); err != nil {
+		if _, err := New().Commit(c, Plan{Mode: ModeCommitment, Duration: d, ListIDs: nil, Grace: DefaultGrace, Penalty: false}); err != nil {
 			t.Errorf("duration %v rejected: %v", d, err)
 		}
 	}
@@ -210,12 +210,12 @@ func TestPenaltyIsCappedAndOnlyOnceAndOnlyIfAccepted(t *testing.T) {
 	c := newFake()
 
 	// Not accepted at commit: no penalty, ever.
-	s, _ := New().Commit(c, ModeCommitment, 25*time.Minute, nil, DefaultGrace, false)
+	s, _ := New().Commit(c, Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false})
 	if _, applied := s.ApplyPenalty(); applied {
 		t.Fatal("penalty applied without consent at commit")
 	}
 
-	s, _ = New().Commit(c, ModeCommitment, 25*time.Minute, nil, DefaultGrace, true)
+	s, _ = New().Commit(c, Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: true})
 	before := s.Target.Remaining(c, nil)
 	s, applied := s.ApplyPenalty()
 	if !applied {

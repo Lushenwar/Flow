@@ -44,7 +44,7 @@ func TestCommitAppliesSessionBlocksImmediately(t *testing.T) {
 	c := newFake()
 	m, rec := newManager(t, c, t.TempDir())
 
-	if _, err := m.Commit(ModeCommitment, 25*time.Minute, []string{"preset.video"}, DefaultGrace, false); err != nil {
+	if _, err := m.Commit(Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: []string{"preset.video"}, Grace: DefaultGrace, Penalty: false}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rec.last.Domains["youtube.com"]; !ok {
@@ -59,7 +59,7 @@ func TestSessionEndLiftsOnlySessionRules(t *testing.T) {
 	c := newFake()
 	m, rec := newManager(t, c, t.TempDir())
 
-	m.Commit(ModeCommitment, 5*time.Minute, []string{"preset.video"}, DefaultGrace, false)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 5 * time.Minute, ListIDs: []string{"preset.video"}, Grace: DefaultGrace, Penalty: false})
 	c.tick(DefaultGrace + 6*time.Minute)
 	if got := m.Snapshot().State; got != Complete {
 		t.Fatalf("state %s", got)
@@ -81,7 +81,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 	c := newFake()
 
 	m, _ := newManager(t, c, dir)
-	m.Commit(ModeCommitment, 30*time.Minute, []string{"preset.video"}, DefaultGrace, false)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 30 * time.Minute, ListIDs: []string{"preset.video"}, Grace: DefaultGrace, Penalty: false})
 	c.tick(DefaultGrace + 5*time.Minute)
 	m.Snapshot() // drive the transition to FOCUS
 
@@ -105,7 +105,7 @@ func TestSessionSurvivesRebootThroughTheManager(t *testing.T) {
 	c := newFake()
 
 	m, _ := newManager(t, c, dir)
-	m.Commit(ModeCommitment, 30*time.Minute, nil, DefaultGrace, false)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 30 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false})
 	c.tick(DefaultGrace + 5*time.Minute)
 	m.Snapshot()
 
@@ -131,7 +131,7 @@ func TestClockJumpDoesNotEndTheSession(t *testing.T) {
 	c := newFake()
 	m, _ := newManager(t, c, t.TempDir())
 
-	m.Commit(ModeCommitment, 30*time.Minute, nil, DefaultGrace, true)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 30 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: true})
 	c.tick(DefaultGrace + time.Minute)
 	m.Snapshot()
 
@@ -157,7 +157,7 @@ func TestDriftIsLoggedAndPenaltyCapped(t *testing.T) {
 
 	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
 	m.Load()
-	m.Commit(ModeCommitment, 60*time.Minute, nil, DefaultGrace, true)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 60 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: true})
 
 	m.mu.Lock()
 	m.checkpointLocked()
@@ -271,7 +271,7 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	c := newFake()
 
 	m, _ := newManager(t, c, dir)
-	m.Commit(ModeCommitment, 50*time.Minute, nil, DefaultGrace, false)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 50 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false})
 	c.tick(DefaultGrace + 50*time.Minute)
 	m.Snapshot() // drives the transition into COMPLETE and the credit
 
@@ -284,6 +284,104 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	balance2, _, _ := m2.Bank()
 	if balance2 != 10*time.Minute {
 		t.Fatalf("balance %v after restart, want 10m — not re-credited, not lost", balance2)
+	}
+}
+
+// A break is not Active — it enforces nothing — so it is easy to forget its
+// countdown in the checkpoint. Forgetting it means a machine that comes back
+// owing intervals with no idea when the next one starts.
+func TestPomodoroBreakSurvivesAReboot(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+
+	m, _ := newManager(t, c, dir)
+	if _, err := m.Commit(Plan{
+		Mode: ModePomodoro, Duration: 25 * time.Minute,
+		Break: 5 * time.Minute, Cycles: 4, Grace: DefaultGrace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Into the first break.
+	c.tick(DefaultGrace + 25*time.Minute + time.Second)
+	if got := m.Snapshot().State; got != Break {
+		t.Fatalf("state %s, want BREAK", got)
+	}
+
+	m.mu.Lock()
+	m.checkpointLocked()
+	m.persistLocked()
+	m.mu.Unlock()
+	c.reboot(2 * time.Minute)
+
+	m2, rec2 := newManager(t, c, dir)
+	s := m2.Snapshot()
+	if s.State != Break {
+		t.Fatalf("state %s after reboot, want BREAK", s.State)
+	}
+	// Two of the five break minutes were spent with the machine off.
+	if got := s.Break.Remaining(c, nil); got != 3*time.Minute {
+		t.Fatalf("break remaining %v after a 2-minute reboot, want 3m", got)
+	}
+	if _, ok := rec2.last.Domains["pornhub.com"]; !ok {
+		t.Fatal("baseline must be re-applied across a reboot taken during a break")
+	}
+
+	// And the next interval still starts on time.
+	c.tick(3 * time.Minute)
+	if got := m2.Snapshot().State; got != Focus {
+		t.Fatalf("state %s, want the next interval to arm", got)
+	}
+	if got := m2.Snapshot().CycleIndex; got != 1 {
+		t.Fatalf("cycle index %d, want 1", got)
+	}
+}
+
+// Crediting is a loop over IntervalsCompleted rather than a single payment, so a
+// cascade that crosses several interval boundaries cannot quietly lose the ones
+// in the middle.
+func TestEveryCompletedIntervalIsCreditedExactlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	m, _ := newManager(t, c, dir)
+
+	if _, err := m.Commit(Plan{
+		Mode: ModePomodoro, Duration: 25 * time.Minute,
+		Break: 5 * time.Minute, Cycles: 3, Grace: DefaultGrace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	c.tick(DefaultGrace + 25*time.Minute + time.Second) // interval 1 done
+	// Credit rides the transition, and Bank() does not drive one — the Run loop
+	// and every state read do. This is the same reason the API tests go through
+	// getState.
+	m.Snapshot()
+	if b, _, _ := m.Bank(); b != 5*time.Minute {
+		t.Fatalf("after one interval: %v, want 5m", b)
+	}
+	// Reading state repeatedly must not pay twice.
+	m.Snapshot()
+	m.Snapshot()
+	if b, _, _ := m.Bank(); b != 5*time.Minute {
+		t.Fatalf("re-credited on a plain read: %v", b)
+	}
+
+	// One phase at a time: an interval entered during a cascade is anchored at
+	// the tick, not at the boundary it crossed, so jumping both phases at once
+	// restarts interval 2 rather than finishing it.
+	c.tick(5 * time.Minute) // break ends
+	m.Snapshot()
+	c.tick(25 * time.Minute) // interval 2 done
+	m.Snapshot()
+	if b, _, _ := m.Bank(); b != 10*time.Minute {
+		t.Fatalf("after two intervals: %v, want 10m", b)
+	}
+
+	// And a restart must not re-pay for what is already banked.
+	m2, _ := newManager(t, c, dir)
+	if b, _, _ := m2.Bank(); b != 10*time.Minute {
+		t.Fatalf("balance %v after restart, want 10m", b)
 	}
 }
 
@@ -305,7 +403,7 @@ func TestACascadedTransitionLogsEveryStateItCrossed(t *testing.T) {
 	if err := m.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Commit(ModeCommitment, 25*time.Minute, nil, DefaultGrace, false); err != nil {
+	if _, err := m.Commit(Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -453,7 +551,7 @@ func TestTamperedSessionRowStartsIdleRatherThanCrashing(t *testing.T) {
 	dir := t.TempDir()
 	c := newFake()
 	m, _ := newManager(t, c, dir)
-	m.Commit(ModeCommitment, 30*time.Minute, nil, DefaultGrace, false)
+	m.Commit(Plan{Mode: ModeCommitment, Duration: 30 * time.Minute, ListIDs: nil, Grace: DefaultGrace, Penalty: false})
 
 	// Someone edits state.db by hand to try to shorten the lock.
 	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))

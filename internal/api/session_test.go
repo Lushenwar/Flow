@@ -161,17 +161,16 @@ func TestNoStopVerbOnceLocked(t *testing.T) {
 	}
 }
 
-// ModePomodoro is a constant and two unused Session fields. Accepting it
-// returned 200 and ran a commitment session, which is the API reporting success
-// for work it did not do.
-func TestUnimplementedModeIsRefusedRatherThanQuietlySubstituted(t *testing.T) {
+// An unknown mode must be refused rather than quietly run as something else.
+// The API reporting success for work it did not do is worse than refusing.
+func TestUnknownModeIsRefusedRatherThanQuietlySubstituted(t *testing.T) {
 	h, _ := sessionServer(t)
 
 	rec := do(t, h, "POST", "/api/session", commitRequest{
-		Mode: "pomodoro", DurationMinutes: 25,
+		Mode: "nonsense", DurationMinutes: 25,
 	})
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("pomodoro returned %d, want 400 until it is built", rec.Code)
+		t.Fatalf("unknown mode returned %d, want 400", rec.Code)
 	}
 	var body map[string]string
 	json.NewDecoder(rec.Body).Decode(&body)
@@ -182,16 +181,176 @@ func TestUnimplementedModeIsRefusedRatherThanQuietlySubstituted(t *testing.T) {
 		t.Fatalf("a refused commit started something anyway: %s", got)
 	}
 
-	// An unknown mode is refused the same way, rather than falling through.
-	if code := do(t, h, "POST", "/api/session", commitRequest{
-		Mode: "nonsense", DurationMinutes: 25,
-	}).Code; code != http.StatusBadRequest {
-		t.Fatalf("unknown mode returned %d", code)
-	}
-
 	// Empty still defaults to commitment — that is the documented behaviour.
 	if code := do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 25}).Code; code != http.StatusOK {
 		t.Fatalf("empty mode returned %d, want the commitment default", code)
+	}
+}
+
+// A pomodoro without its own parameters is refused with the reason, rather than
+// silently becoming a one-cycle session.
+func TestPomodoroValidatesCyclesAndBreak(t *testing.T) {
+	h, _ := sessionServer(t)
+
+	cases := []struct {
+		name string
+		req  commitRequest
+		want string
+	}{
+		{"no cycles", commitRequest{Mode: "pomodoro", DurationMinutes: 25, BreakMinutes: 5}, "cycles_out_of_range"},
+		{"too many cycles", commitRequest{Mode: "pomodoro", DurationMinutes: 25, BreakMinutes: 5, Cycles: 99}, "cycles_out_of_range"},
+		{"no break", commitRequest{Mode: "pomodoro", DurationMinutes: 25, Cycles: 4}, "break_out_of_range"},
+		{"break too long", commitRequest{Mode: "pomodoro", DurationMinutes: 25, BreakMinutes: 999, Cycles: 4}, "break_out_of_range"},
+		{"interval too short", commitRequest{Mode: "pomodoro", DurationMinutes: 1, BreakMinutes: 5, Cycles: 4}, "duration_out_of_range"},
+	}
+	for _, c := range cases {
+		rec := do(t, h, "POST", "/api/session", c.req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s returned %d, want 400", c.name, rec.Code)
+			continue
+		}
+		var body map[string]string
+		json.NewDecoder(rec.Body).Decode(&body)
+		if body["error"] != c.want {
+			t.Errorf("%s: error %q, want %q", c.name, body["error"], c.want)
+		}
+	}
+	if got := getState(t, h).Session.State; got != session.Idle {
+		t.Fatalf("a refused commit started something anyway: %s", got)
+	}
+}
+
+// The whole mode, end to end: four intervals, three breaks, locked during every
+// focus interval and enforcing nothing but baseline during every break.
+func TestPomodoroRunsItsCyclesAndOnlyLocksDuringFocus(t *testing.T) {
+	h, c := sessionServer(t)
+
+	if code := do(t, h, "POST", "/api/session", commitRequest{
+		Mode: "pomodoro", DurationMinutes: 25, BreakMinutes: 5, Cycles: 3,
+		BlocklistIDs: []string{"preset.video"},
+	}).Code; code != http.StatusOK {
+		t.Fatalf("commit returned %d", code)
+	}
+
+	// Grace, then the first interval.
+	c.tick(session.DefaultGrace + time.Second)
+	st := getState(t, h)
+	if st.Session.State != session.Focus {
+		t.Fatalf("state %s, want FOCUS", st.Session.State)
+	}
+	if st.Session.Cycle == nil || st.Session.Cycle.Index != 1 || st.Session.Cycle.Of != 3 {
+		t.Fatalf("cycle %+v, want 1 of 3", st.Session.Cycle)
+	}
+	if st.Session.Cycle.Phase != "focus" {
+		t.Fatalf("phase %q", st.Session.Cycle.Phase)
+	}
+	if st.Effective.Attribution["preset.video"] != enforce.Session {
+		t.Fatal("session blocks must be live during a focus interval")
+	}
+	// There is no stop verb inside an interval.
+	if do(t, h, "DELETE", "/api/session", nil).Code != http.StatusConflict {
+		t.Fatal("abort must be refused during FOCUS")
+	}
+
+	// First interval ends: a break.
+	c.tick(25 * time.Minute)
+	st = getState(t, h)
+	if st.Session.State != session.Break {
+		t.Fatalf("state %s, want BREAK", st.Session.State)
+	}
+	if st.Session.Cycle.Phase != "break" {
+		t.Fatalf("phase %q, want break", st.Session.Cycle.Phase)
+	}
+	if _, ok := st.Effective.Attribution["preset.video"]; ok {
+		t.Fatal("session rules must lift during a break")
+	}
+	if st.Effective.Attribution["preset.adult"] != enforce.Baseline {
+		t.Fatal("baseline keeps running through a break")
+	}
+	if st.Session.RemainingSeconds == 0 {
+		t.Fatal("a break needs a countdown to render")
+	}
+
+	// The break ends and the next interval arms itself — straight into FOCUS,
+	// with no fresh grace window. Four free bailout points in one session is not
+	// a commitment device.
+	c.tick(5 * time.Minute)
+	st = getState(t, h)
+	if st.Session.State != session.Focus {
+		t.Fatalf("state %s, want FOCUS for cycle 2", st.Session.State)
+	}
+	if st.Session.Cycle.Index != 2 {
+		t.Fatalf("cycle index %d, want 2", st.Session.Cycle.Index)
+	}
+	if st.Session.CanRelease {
+		t.Fatal("the next interval must not reopen the abort window")
+	}
+	if st.Effective.Attribution["preset.video"] != enforce.Session {
+		t.Fatal("blocks must come back for the next interval")
+	}
+
+	// Run out the rest, one phase at a time. Ticking the whole remainder in one
+	// jump does NOT work, and that is a real property rather than a test
+	// artefact: a break entered during a cascade is anchored at the moment the
+	// tick ran, not at the instant the interval actually ended, so a long
+	// downtime stretches the schedule rather than replaying it. Harmless,
+	// because a break enforces nothing — but worth knowing before someone
+	// "fixes" a test by making the cascade skip breaks entirely.
+	c.tick(25 * time.Minute) // cycle 2 focus ends
+	if got := getState(t, h).Session.State; got != session.Break {
+		t.Fatalf("state %s, want BREAK after cycle 2", got)
+	}
+	c.tick(5 * time.Minute) // break ends, cycle 3 begins
+	if got := getState(t, h).Session.Cycle.Index; got != 3 {
+		t.Fatalf("cycle index %d, want 3", got)
+	}
+	c.tick(25 * time.Minute) // cycle 3 ends, and there is no fourth
+	st = getState(t, h)
+	if st.Session.State != session.Complete {
+		t.Fatalf("state %s, want COMPLETE after the last interval", st.Session.State)
+	}
+	if _, ok := st.Effective.Attribution["preset.video"]; ok {
+		t.Fatal("session rules must lift when the pomodoro finishes")
+	}
+
+	// Three 25-minute intervals at 0.2 = 15 minutes banked.
+	if got := getBank(t, h).BalanceSeconds; got != 3*300 {
+		t.Fatalf("balance %d seconds, want 900 — every interval earns, not just the last", got)
+	}
+}
+
+// A break enforces nothing beyond baseline, so there is no lock to break out of
+// — only the next interval to decline.
+func TestPomodoroCanBeEndedDuringABreakButNotDuringAnInterval(t *testing.T) {
+	h, c := sessionServer(t)
+	do(t, h, "POST", "/api/session", commitRequest{
+		Mode: "pomodoro", DurationMinutes: 25, BreakMinutes: 5, Cycles: 4,
+	})
+	c.tick(session.DefaultGrace + 25*time.Minute + time.Second)
+
+	st := getState(t, h)
+	if st.Session.State != session.Break {
+		t.Fatalf("state %s, want BREAK", st.Session.State)
+	}
+	if !st.Session.CanRelease {
+		t.Fatal("canRelease must be true during a break — the UI renders the tap from it")
+	}
+
+	// Committing over a running pomodoro must not silently discard the intervals
+	// still owed.
+	if code := do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 25}).Code; code != http.StatusConflict {
+		t.Fatalf("commit during a break returned %d, want 409", code)
+	}
+
+	if code := do(t, h, "DELETE", "/api/session", nil).Code; code != http.StatusOK {
+		t.Fatalf("abort during a break returned %d", code)
+	}
+	if got := getState(t, h).Session.State; got != session.Idle {
+		t.Fatalf("state %s after ending at a break", got)
+	}
+	// One interval was completed, so one interval is paid for.
+	if got := getBank(t, h).BalanceSeconds; got != 300 {
+		t.Fatalf("balance %d, want 300 — the finished interval earns, the abandoned one does not", got)
 	}
 }
 
