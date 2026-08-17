@@ -3,8 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -175,6 +178,78 @@ func TestReleaseHasNoCORS(t *testing.T) {
 	h := New(st, "secret", false, fakeEnforcement{}, nil).Handler()
 	if got := get(t, h, "/api/health", "secret").Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("release build set CORS to %q", got)
+	}
+}
+
+// Listen used to fall back to an ephemeral port when the requested one was
+// taken. proxy.go and flowctl read the port file and were fine; the extension
+// cannot read files, kept polling 8787, and silently stopped enforcing while the
+// daemon went on reporting itself healthy. A bounded walk keeps it findable.
+func TestListenWalksForwardWhenThePortIsTaken(t *testing.T) {
+	dir := t.TempDir()
+	portFile := filepath.Join(dir, "port")
+
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+	taken := base.Addr().(*net.TCPAddr).Port
+
+	ln, err := Listen(taken, portFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	got := ln.Addr().(*net.TCPAddr).Port
+	if got == taken {
+		t.Fatal("bound a port that was already held")
+	}
+	if got < taken || got >= taken+PortSearch {
+		t.Fatalf("landed on %d, outside %d-%d — the extension only probes that range",
+			got, taken, taken+PortSearch-1)
+	}
+
+	// The port file still has to be right, because it is what every other
+	// client reads.
+	b, err := os.ReadFile(portFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(b)) != strconv.Itoa(got) {
+		t.Fatalf("port file says %q, listening on %d", b, got)
+	}
+}
+
+// A machine that cannot bind anything in range is a broken install. Erroring is
+// better than an ephemeral port nothing can find.
+func TestListenFailsRatherThanHidingOnAnEphemeralPort(t *testing.T) {
+	dir := t.TempDir()
+
+	start, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer start.Close()
+	base := start.Addr().(*net.TCPAddr).Port
+
+	// Hold the whole search range.
+	for p := base + 1; p < base+PortSearch; p++ {
+		held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			t.Skipf("could not stage a full range: %v", err)
+		}
+		defer held.Close()
+	}
+
+	ln, err := Listen(base, filepath.Join(dir, "port"))
+	if err == nil {
+		ln.Close()
+		t.Fatal("bound something outside the range the extension can find")
+	}
+	if !strings.Contains(err.Error(), "no free port") {
+		t.Fatalf("unhelpful error: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -177,15 +178,46 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// Listen binds loopback on the requested port, falling back to an ephemeral one
-// if it is taken, and records the result so the UI can find the daemon.
+// PortSearch is how many consecutive ports Listen will try before giving up.
+//
+// It exists for the browser extension, which is the one client that cannot be
+// told where the daemon went. proxy.go and flowctl read %ProgramData%\Flow\port;
+// an extension lives in the browser sandbox and cannot read files at all, so it
+// probes a fixed range. Keep this in step with PORT_SEARCH in extension/background.js.
+const PortSearch = 3
+
+// Listen binds loopback on the requested port, walking forward a few ports if it
+// is taken, and records the result so every client can find the daemon.
+//
+// It used to fall back to an ephemeral port, which was a silent failure with no
+// symptom on the daemon side: the daemon worked, proxy.go and flowctl followed
+// the port file, and the extension went on polling 8787 forever. URL-path
+// granularity and warm-tab closing both stopped and nothing anywhere said so.
+// That is the same shape as the MV3 deadlock in claude.md — the obvious health
+// signal was the one thing still working.
+//
+// A bounded walk keeps the extension's search to a few probes. Exhausting it is
+// an error rather than an ephemeral port, because a machine that cannot bind any
+// of them is a broken install, not a state to degrade quietly into.
 func Listen(port int, portFile string) (net.Listener, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
-			return nil, err
+	var ln net.Listener
+	var err error
+	for try := port; try < port+PortSearch; try++ {
+		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", try))
+		if err == nil {
+			if try != port {
+				// Degraded, not broken: say so. The extension can still find us
+				// inside the search range, but only just.
+				log.Printf("port %d was taken; listening on %d instead (the extension probes %d-%d)",
+					port, try, port, port+PortSearch-1)
+			}
+			break
 		}
 	}
+	if err != nil {
+		return nil, fmt.Errorf("no free port in %d-%d: %w", port, port+PortSearch-1, err)
+	}
+
 	actual := ln.Addr().(*net.TCPAddr).Port
 	if err := os.WriteFile(portFile, []byte(fmt.Sprint(actual)), 0o644); err != nil {
 		ln.Close()
