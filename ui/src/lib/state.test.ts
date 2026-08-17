@@ -342,13 +342,15 @@ describe("event log copy", () => {
 });
 
 describe("visibleEvents", () => {
+  // As the daemon returns them: newest first, because the limit is applied in
+  // SQL and a LIMIT only keeps the right end if the ORDER BY points that way.
   const rows: EventRow[] = [
-    { id: 1, ts: "2026-08-04T12:00:00Z", kind: "service_start", data: "{}" },
-    { id: 2, ts: "2026-08-04T12:01:00Z", kind: "session_commit", data: "{}" },
     { id: 3, ts: "2026-08-04T12:02:00Z", kind: "clock_drift", data: "{}" },
+    { id: 2, ts: "2026-08-04T12:01:00Z", kind: "session_commit", data: "{}" },
+    { id: 1, ts: "2026-08-04T12:00:00Z", kind: "service_start", data: "{}" },
   ];
 
-  it("puts newest first and hides noise", () => {
+  it("hides noise and keeps the daemon's order", () => {
     const got = visibleEvents(rows);
     expect(got.map((e) => e.id)).toEqual([3, 2]);
   });

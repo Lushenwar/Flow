@@ -169,7 +169,7 @@ func TestDriftIsLoggedAndPenaltyCapped(t *testing.T) {
 	m.checkDriftLocked()
 	m.mu.Unlock()
 
-	evs, err := st.Events(0)
+	evs, err := st.Events(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestTimezoneChangeUnderAnActiveScheduleIsLogged(t *testing.T) {
 	m.checkTimezoneLocked()
 	m.mu.Unlock()
 
-	evs, err := st.Events(0)
+	evs, err := st.Events(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestMatchingTimezoneLogsNothing(t *testing.T) {
 	m.checkTimezoneLocked()
 	m.mu.Unlock()
 
-	evs, _ := st.Events(0)
+	evs, _ := st.Events(0, 0)
 	for _, e := range evs {
 		if e.Kind == "schedule_timezone_changed" {
 			t.Fatal("logged a tamper event for a machine that never moved")

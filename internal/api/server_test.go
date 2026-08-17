@@ -107,11 +107,47 @@ func TestEventsSince(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("want 2 events, got %d", len(all))
 	}
+	// Newest first: the limit is applied in SQL, so the ordering is what decides
+	// which end a LIMIT keeps.
+	if all[0].Kind != "service_stop" {
+		t.Fatalf("want newest first, got %+v", all)
+	}
 
 	var rest []store.Event
 	json.NewDecoder(get(t, h, "/api/events?since="+strconv.FormatInt(first, 10), "secret").Body).Decode(&rest)
 	if len(rest) != 1 || rest[0].Kind != "service_stop" {
 		t.Fatalf("since filter wrong: %+v", rest)
+	}
+}
+
+// The history list renders eight rows. This used to return the entire log,
+// HMAC-verified row by row, every five seconds, to draw them.
+func TestEventsAreBoundedAndCannotBeAskedForInFull(t *testing.T) {
+	h, st, _ := newServer(t)
+	for i := 0; i < store.DefaultEventLimit+50; i++ {
+		if _, err := st.Append("session_commit", "{}"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var unasked []store.Event
+	json.NewDecoder(get(t, h, "/api/events", "secret").Body).Decode(&unasked)
+	if len(unasked) != store.DefaultEventLimit {
+		t.Fatalf("unbounded read returned %d rows, want the %d cap",
+			len(unasked), store.DefaultEventLimit)
+	}
+
+	var small []store.Event
+	json.NewDecoder(get(t, h, "/api/events?limit=5", "secret").Body).Decode(&small)
+	if len(small) != 5 {
+		t.Fatalf("limit=5 returned %d", len(small))
+	}
+
+	// A caller must not be able to talk its way past the cap.
+	var greedy []store.Event
+	json.NewDecoder(get(t, h, "/api/events?limit=100000", "secret").Body).Decode(&greedy)
+	if len(greedy) > store.DefaultEventLimit {
+		t.Fatalf("limit=100000 returned %d rows — the cap is not a cap", len(greedy))
 	}
 }
 

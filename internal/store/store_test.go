@@ -75,21 +75,49 @@ func TestEventsSurviveAndDetectRenumbering(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	evs, err := s.Events(0)
+	evs, err := s.Events(0, 0)
 	if err != nil || len(evs) != 2 {
 		t.Fatalf("got %d events, %v", len(evs), err)
 	}
-	if evs[0].Kind != "service_start" || evs[1].Kind != "clock_drift" {
+	// Newest first. The limit is applied in SQL, so the ordering is what decides
+	// which end a LIMIT keeps — ascending would cap the log at its oldest rows.
+	if evs[0].Kind != "clock_drift" || evs[1].Kind != "service_start" {
 		t.Fatalf("order or content wrong: %+v", evs)
 	}
-	if evs, _ := s.Events(evs[0].ID); len(evs) != 1 {
-		t.Fatalf("since filter ignored")
+	if got, _ := s.Events(evs[1].ID, 0); len(got) != 1 || got[0].Kind != "clock_drift" {
+		t.Fatalf("since filter ignored: %+v", got)
 	}
 
 	// The id is inside the signature, so moving a row breaks it.
 	edit(t, dbPath, `UPDATE events SET id=99 WHERE kind='clock_drift'`)
-	if _, err := s.Events(0); !errors.Is(err, ErrTampered) {
+	if _, err := s.Events(0, 0); !errors.Is(err, ErrTampered) {
 		t.Fatalf("renumbered event must not verify, got %v", err)
+	}
+}
+
+// The limit is applied in SQL because the cost that matters is one HMAC per
+// returned row, not the bytes on the wire.
+func TestEventsLimitIsAppliedAndKeepsTheNewest(t *testing.T) {
+	s, _ := open(t)
+	for i := 0; i < 10; i++ {
+		if _, err := s.Append("session_commit", itoa(int64(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.Events(0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("limit ignored: %d rows", len(got))
+	}
+	if got[0].Data != "9" {
+		t.Fatalf("kept the wrong end: newest is %q", got[0].Data)
+	}
+
+	if all, _ := s.Events(0, 0); len(all) != 10 {
+		t.Fatalf("a zero limit should mean the default, got %d", len(all))
 	}
 }
 

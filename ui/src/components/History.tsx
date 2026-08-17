@@ -12,15 +12,20 @@ import { eventLabel, visibleEvents, type EventRow } from "@/lib/state";
 export function History({ limit = 8 }: { limit?: number }) {
   const [events, setEvents] = useState<EventRow[]>([]);
 
+  // Ask for a little more than we render, so filtering out unlabelled kinds
+  // still leaves a full list. Asking for everything — which this did — meant
+  // downloading the entire event history, HMAC-verified row by row, every five
+  // seconds, to draw eight lines.
   useEffect(() => {
-    const load = () => api.events().then(setEvents).catch(() => {});
+    const load = () =>
+      api.events(limit * 3).then(setEvents).catch(() => {});
     const first = setTimeout(load, 0);
     const t = setInterval(load, 5000);
     return () => {
       clearTimeout(first);
       clearInterval(t);
     };
-  }, []);
+  }, [limit]);
 
   const rows = visibleEvents(events).slice(0, limit);
   if (rows.length === 0) return null;

@@ -158,10 +158,22 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h)
 }
 
+// events returns the newest first, bounded. The limit is capped rather than
+// honoured blindly: the response costs an HMAC per row, and no caller has a
+// reason to ask for the whole history over HTTP.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	var since int64
 	fmt.Sscanf(r.URL.Query().Get("since"), "%d", &since)
-	evs, err := s.st.Events(since)
+
+	limit := store.DefaultEventLimit
+	if q := r.URL.Query().Get("limit"); q != "" {
+		var want int
+		if _, err := fmt.Sscanf(q, "%d", &want); err == nil && want > 0 && want < limit {
+			limit = want
+		}
+	}
+
+	evs, err := s.st.Events(since, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
