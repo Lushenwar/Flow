@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -36,14 +37,14 @@ func TestGraceExpiryLocksTheSession(t *testing.T) {
 	s := commit(t, c)
 
 	c.tick(14 * time.Second)
-	s, moved := s.Tick(c, nil)
-	if moved || s.State != Arming {
+	s, passed := s.Tick(c, nil)
+	if len(passed) > 0 || s.State != Arming {
 		t.Fatal("grace has not expired yet")
 	}
 
 	c.tick(2 * time.Second)
-	s, moved = s.Tick(c, nil)
-	if !moved || s.State != Focus {
+	s, passed = s.Tick(c, nil)
+	if len(passed) == 0 || s.State != Focus {
 		t.Fatalf("state %s, want FOCUS", s.State)
 	}
 	if s.CanRelease() {
@@ -105,8 +106,8 @@ func TestSessionCompletesOnTime(t *testing.T) {
 	}
 
 	c.tick(2 * time.Minute)
-	s, moved := s.Tick(c, nil)
-	if !moved || s.State != Complete {
+	s, passed := s.Tick(c, nil)
+	if len(passed) == 0 || s.State != Complete {
 		t.Fatalf("state %s, want COMPLETE", s.State)
 	}
 	if s.Active() {
@@ -251,9 +252,16 @@ func TestTickCascadesThroughSkippedStates(t *testing.T) {
 
 	c.tick(2 * time.Hour) // grace and the entire 25 minutes elapsed while down
 
-	s, moved := s.Tick(c, nil)
-	if !moved || s.State != Complete {
+	s, passed := s.Tick(c, nil)
+	if len(passed) == 0 || s.State != Complete {
 		t.Fatalf("state %s, want COMPLETE in one tick", s.State)
+	}
+
+	// Every state crossed is reported, not just the landing one. The caller
+	// writes one event per entry, and FOCUS is the moment the lock became
+	// irreversible — a tamper log that skips it is missing the part that matters.
+	if !slices.Equal(passed, []State{Focus, Complete}) {
+		t.Fatalf("passed through %v, want [FOCUS COMPLETE]", passed)
 	}
 }
 
@@ -264,9 +272,9 @@ func TestTickIsIdempotentAtRest(t *testing.T) {
 	s, _ = s.Tick(c, nil)
 
 	for i := 0; i < 5; i++ {
-		var moved bool
-		s, moved = s.Tick(c, nil)
-		if moved {
+		var passed []State
+		s, passed = s.Tick(c, nil)
+		if len(passed) > 0 {
 			t.Fatal("Tick reported a transition with no clock movement — every one is a signed write")
 		}
 	}

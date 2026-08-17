@@ -240,10 +240,16 @@ func (m *Manager) transition(kind string, fn func(Session) (Session, error)) (Se
 }
 
 func (m *Manager) tickLocked() bool {
-	next, moved := m.sess.Tick(m.clock, nil)
+	next, passed := m.sess.Tick(m.clock, nil)
+	moved := len(passed) > 0
 	if moved {
 		m.sess = next
-		m.event("session_"+string(next.State), "{}")
+		// One event per state crossed, not just the landing state. A cascade
+		// through ARMING -> FOCUS -> COMPLETE has to leave FOCUS in the log:
+		// that is the moment the lock became irreversible.
+		for _, st := range passed {
+			m.event("session_"+string(st), "{}")
+		}
 		m.creditLocked()
 	}
 	if m.bank.Tick(m.clock, nil) {

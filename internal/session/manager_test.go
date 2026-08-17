@@ -287,6 +287,49 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	}
 }
 
+// A daemon that was down through the whole session lands in COMPLETE in one
+// tick, which is correct. The log has to record what it crossed on the way:
+// session_FOCUS is the moment the lock became irreversible, and a tamper record
+// that shows only where it ended up is missing the part that matters.
+func TestACascadedTransitionLogsEveryStateItCrossed(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Commit(ModeCommitment, 25*time.Minute, nil, DefaultGrace, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The machine is off for two hours: grace and the whole session elapse.
+	c.tick(2 * time.Hour)
+	if got := m.Snapshot().State; got != Complete {
+		t.Fatalf("state %s, want COMPLETE", got)
+	}
+
+	evs, err := st.Events(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range evs {
+		seen[e.Kind] = true
+	}
+	for _, kind := range []string{"session_FOCUS", "session_COMPLETE"} {
+		if !seen[kind] {
+			t.Fatalf("%s missing from the log: %v", kind, seen)
+		}
+	}
+}
+
 // Moving the machine's timezone under an active scheduled lock is a tamper
 // event. The window already holds — ActiveAt evaluates in the pinned offset —
 // but the log has to say so, and it could not: the check compared
