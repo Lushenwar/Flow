@@ -7,6 +7,7 @@ import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
 import { EscapeDialog } from "@/components/EscapeDialog";
 import { PopOutTimer } from "@/components/PopOutTimer";
+import { useIsDesktop } from "@/lib/desktop";
 import { api } from "@/lib/flow-client";
 import {
   arcFraction,
@@ -24,6 +25,8 @@ const ESCAPE_MINUTES = 15;
 export default function FocusScreen() {
   const { state, refresh } = usePoll();
   const now = useNow();
+  // Before the loading return: hook order cannot depend on whether state arrived.
+  const isDesktop = useIsDesktop();
   const [minutes, setMinutes] = useState<number>(DURATIONS[1]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [escapeOpen, setEscapeOpen] = useState(false);
@@ -137,7 +140,12 @@ export default function FocusScreen() {
 
       {/* The same dial in a window the OS keeps on top. Inert on purpose: it is
           there to show you the countdown, not to be a second place to commit or
-          abort from. */}
+          abort from.
+
+          Browser only. The desktop shell has mini mode, which is the same idea
+          without needing a tab to stay open behind it, so offering both would be
+          two buttons for one job. */}
+      {!isDesktop && (
       <PopOutTimer>
         {(pipNow) => (
           <Dial
@@ -156,6 +164,7 @@ export default function FocusScreen() {
           />
         )}
       </PopOutTimer>
+      )}
 
       {dialogOpen && (
         <CommitDialog

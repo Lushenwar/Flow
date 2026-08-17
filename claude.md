@@ -120,10 +120,42 @@ recurrence fails the run instead of looking green.
 
 `[~]` only because `install.ps1` is not the signed installer the exit criterion asks for.
 
+**The desktop shell is built.** `Flow.exe` is a Wails v2 window over the same static export, and
+`build-release.ps1 -Arch amd64` produces an NSIS installer that drops `flowd.exe`, `flowctl.exe` and
+the extension, then registers the service in one elevated pass. Before this, "run the app" meant Go,
+Node, a dev server, and a token pasted into an env var — there was no artifact to hand anyone.
+
+**The browser build could never have shipped, for a reason that only shows up when you package it.**
+`NEXT_PUBLIC_FLOW_TOKEN` is baked in at compile time, so a build is bound to one machine's token.
+The shell fixes this by not giving the frontend a token at all: `proxy.go` forwards `/api/*` to the
+daemon and attaches the bearer header in Go. The token never enters the bundle.
+
+That proxy also closes a hole that would have shipped broken. Wails serves the page from
+`wails.localhost`, so a direct fetch to `127.0.0.1:8787` is **cross-origin** — and `devCORS` sends
+headers only in dev builds, on the stated assumption that "in release the UI is same-origin". That
+assumption was false the moment the UI moved into a webview. Proxying makes it true again, which is
+the right direction: the alternative was widening the daemon's CORS in release to make the frontend's
+mistake work.
+
+**Mini mode** is the sticky-note timer: `/mini` renders the bare dial, and `SetMini` shrinks the
+window to 220×250, pins it always-on-top, and parks it in the top-right. Always-on-top applies *only*
+in mini mode — a full-size window that refuses to go behind anything is an irritant, not a
+commitment device. `Frameless` is build-time in Wails v2, so the full-size window draws its own title
+bar too. The Document PiP pop-out stays for the browser build and is hidden in the shell; two buttons
+for one job is worse than either.
+
+**Phase 7 stays `[~]`.** The installer is not signed — Authenticode needs a certificate this project
+does not have, so every user gets a SmartScreen warning on first run. Autostart for the window is
+also not wired (the *daemon* auto-starts; the window does not).
+
 **Cross-browser:** Edge is Chromium and takes the same unpacked package. Firefox gets a four-line
 `browser.js` alias and `browser_specific_settings` in the manifest rather than a polyfill dependency —
 a supply-chain surface in a blocker people install to protect themselves is not worth four lines.
 Neither has been loaded and driven; only Chrome has.
+
+**Still unverified:** Firefox and Edge, reboot survival of a locked session, and the installer itself
+— it has been built but never run, so the service-registration and teardown paths inside `project.nsi`
+are unexercised. Only `amd64` matters for real users; the local builds have been `arm64`.
 
 **DoH gap closed at the name layer.** Blocking resolver IPs never touched Firefox, whose default
 endpoint `mozilla.cloudflare-dns.com` is an ordinary CDN address. The sink now refuses
@@ -147,10 +179,18 @@ checkbox, which is worse than honestly unsigned. `install.ps1` reports the real 
 writes SHA256 checksums.
 Update this as you finish each step.
 
-**Checks:** `go test ./cmd/... ./internal/... && go vet ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
+**Checks:** `go test . ./cmd/... ./internal/... && go vet . ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
 
-Scoped to `./cmd/...` and `./internal/...` rather than `./...` because `ui/node_modules` ships a
-stray Go package (`flatted/golang`) that `./...` picks up as part of this module.
+Named packages rather than `./...` because `ui/node_modules` ships a stray Go package
+(`flatted/golang`) that `./...` picks up as part of this module. The leading `.` is the Wails
+desktop shell at the module root — it holds the API proxy, so leaving it out of the check line
+means the one component that handles the bearer token is the one nothing verifies.
+
+**On a fresh clone, run `(cd ui && npm run build)` once before anything Go.** The root package
+embeds `ui/out`, and `go:embed` fails on a directory that does not exist. Nothing is committed there
+to prevent it because `next build` deletes and recreates that directory, so a placeholder would
+disappear on first use. `wails build` and `build-release.ps1` both build the frontend first and are
+unaffected.
 
 ---
 
@@ -349,8 +389,13 @@ A PR violating one does not merge, regardless of what it improves.
   mutable row HMAC-signed, key DPAPI-wrapped.
 * **Local API:** HTTP on `127.0.0.1` only, bearer token, JSON.
 * **UI:** Next.js (App Router, TypeScript strict, Tailwind, Lucide) static export, wrapped in
-  **Wails** for tray + autostart. Wails over Tauri because it's Go-native — no second toolchain for
-  what amounts to a tray icon and a window.
+  **Wails v2**. Wails over Tauri because it's Go-native — no second toolchain for what amounts to a
+  window. Two corrections to the original plan, both found by building it:
+  * **Wails v2 has no system tray.** That was v1, and it returns in v3. "Tray + autostart" is not
+    something v2 gives you; the always-on-top mini window covers the same need, and autostart would
+    be a `Run` key we write ourselves.
+  * **Wails v2 is single-window,** which is why mini mode is a *route* (`/mini`) that resizes and
+    pins the one window, rather than a second floating widget. Multi-window needs v3 (alpha).
 * **Process monitoring:** WMI `__InstanceCreationEvent` or a 1s process-list poll. Not ETW — Go's ETW
   story is weak and nobody launches Steam in under a second.
 
@@ -360,6 +405,11 @@ A PR violating one does not merge, regardless of what it improves.
 
 ```text
 flow/
+├── main.go               # Wails desktop shell — at the module root because
+├── app.go                #   go:embed cannot reach up out of its own directory,
+├── proxy.go              #   and the embedded assets live in ui/out
+├── wails.json
+├── build-release.ps1     # builds flowd+flowctl+app+NSIS installer for one arch
 ├── cmd/
 │   ├── flowd/            # service: main, SCM integration, watchdog
 │   └── flowctl/          # debug CLI (read-only in release builds)
@@ -386,7 +436,8 @@ flow/
 │   └── src/
 │       ├── app/
 │       │   ├── page.tsx        # Focus screen — the dial
-│       │   └── blocking/       # Blocking screen — baseline toggles
+│       │   ├── blocking/       # Blocking screen — baseline toggles
+│       │   └── mini/           # the pinned sticky-note timer (desktop only)
 │       ├── components/
 │       │   ├── Dial.tsx        # ring, countdown, commit/arming tap target
 │       │   ├── DurationChips.tsx
@@ -538,8 +589,26 @@ is what stops the Blocking screen from appearing to lift a permanent rule when a
 * `DELETE /api/baseline/{id}/disable` — cancels a pending disable, immediate and free.
 
 ### Lists, schedules, bank, events
-* `GET|POST /api/blocklists`, `PUT|DELETE /api/blocklists/{id}` — mutations evaluated for **direction**
-  while anything is active: adding is allowed, removing returns `409 would_weaken`.
+* `GET|POST /api/blocklists`, `DELETE /api/blocklists/{domain}` — the user's own sites, for the
+  things no preset covers. Mutations are evaluated for **direction**: adding strengthens and is
+  always allowed, mid-session included; removing weakens and returns `409 would_weaken`.
+  * **The id in the DELETE path is a domain, not a list id.** There is exactly one user list, so
+    addressing the list would leave no way to name the entry being removed.
+  * `POST` takes `{"domains": [...]}` and accepts whole URLs, because the address bar is where the
+    decision to block something gets made. Everything after the host is discarded and a leading
+    `www.` is stripped — matching is by label-boundary suffix, so one entry covers the subdomains.
+    A path is *not* silently honoured: HTTPS means the network layer sees `reddit.com` and never
+    `/r/all`, and accepting a path while blocking the whole domain would leave the user believing
+    they had scoped something they had not.
+  * A bad entry rejects the **whole batch**. "3 of 5 added" on a screen whose job is telling you
+    what is enforced is worse than refusing.
+  * The permanent allowlist is refused with `allowlisted` rather than dropped. `Resolve` strips it
+    anyway, so a silent accept would leave the entry sitting in the list looking enforced.
+  * **Removing is refused while the list is enforced**, and the way out is the ordinary one: turn the
+    Custom sites row off, which takes the usual fifteen minutes, then edit. This needs no new
+    machinery — the list reaches the union as one list carried by a baseline rule, so it inherits
+    that rule's attribution and its delay. Checked on the rule rather than the effective set, so a
+    bank spend is not a window you can edit through.
 * `GET|POST /api/schedules`
 * `GET /api/bank`, `POST /api/bank/spend` — requires IDLE; a spend is itself a small locked window that
   hard re-locks at expiry, and cannot be cancelled to bank the remainder.
@@ -743,6 +812,11 @@ sets up service, autostart, and extension in one pass.
 | `preset.offline` | Session | Everything except allowlist |
 
 Presets are seed data, not code. A user edit forks the preset into a custom list.
+
+**`custom.blocked` is the user's own list**, and it is not a fourth rule source — it is content
+carried by a baseline rule, so the union, the attribution, and the 15-minute disable delay all apply
+to it unchanged. See `GET|POST /api/blocklists` above. It exists because the presets will never
+cover everything, and a blocker you cannot point at your own problem site is one you stop using.
 
 ---
 

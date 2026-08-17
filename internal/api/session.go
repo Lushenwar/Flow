@@ -22,6 +22,9 @@ type Sessions interface {
 	CancelBaselineDisable(id string) error
 	Bank() (balance, remaining time.Duration, spending bool)
 	SpendBank(d time.Duration) error
+	Custom() []string
+	AddCustom(raws []string) ([]string, error)
+	RemoveCustom(raw string) error
 	Schedules() ([]schedule.Schedule, []string)
 	PutSchedule(s schedule.Schedule) error
 	Commit(mode session.Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (session.Session, error)

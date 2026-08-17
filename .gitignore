@@ -4,4 +4,19 @@ key.bin
 token
 /ui/node_modules/
 /ui/.next/
+
+# The static export is a build artifact that main.go embeds. No placeholder
+# committed here: `next build` deletes and recreates the directory, so anything
+# checked in would vanish on the first build. The cost is that `go build .`
+# needs the frontend built once first — which `wails build` does for you.
 /ui/out/
+
+# Wails writes this next to package.json to decide whether to re-run npm install.
+/ui/package.json.md5
+
+# Wails build output and generated JS bindings. The bindings live outside ui/src
+# on purpose: we hand-write the bridge in lib/desktop.ts and never import them,
+# and generated code in the source tree only shows up as lint errors.
+/build/bin/
+/build/wailsjs/
+/build/windows/installer/tmp/

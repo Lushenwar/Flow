@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
+import { CustomSites } from "@/components/CustomSites";
 import { History } from "@/components/History";
 import { ScheduleRowView } from "@/components/ScheduleRow";
 import { ApiError, api } from "@/lib/flow-client";
@@ -118,6 +119,10 @@ export default function BlockingScreen() {
           {refused}
         </p>
       )}
+
+      {/* Adding a site changes the baseline rows too — the list arrives as a
+          rule with its own switch — so a change here has to refresh the poll. */}
+      <CustomSites onChanged={refresh} />
 
       {schedules.length > 0 && (
         <div className="mt-5 pt-3" style={{ borderTop: "0.5px solid var(--hairline)" }}>

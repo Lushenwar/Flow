@@ -19,6 +19,7 @@ import {
   scheduleWindow,
   secondsUntil,
   sessionOwnedIds,
+  splitDomains,
   visibleEvents,
 } from "./state";
 
@@ -286,6 +287,29 @@ describe("bankLabel", () => {
 
   it("renders nothing before the bank has loaded", () => {
     expect(bankLabel(null)).toBe("");
+  });
+});
+
+describe("splitDomains", () => {
+  it("takes a pasted list however it was separated", () => {
+    // One per line out of a note, or comma-separated out of somewhere else.
+    expect(splitDomains("reddit.com\nx.com, news.ycombinator.com;  tiktok.com"))
+      .toEqual(["reddit.com", "x.com", "news.ycombinator.com", "tiktok.com"]);
+  });
+
+  it("takes a single entry unchanged, whitespace and all", () => {
+    expect(splitDomains("  reddit.com  ")).toEqual(["reddit.com"]);
+  });
+
+  it("yields nothing for empty input, so the button has nothing to send", () => {
+    expect(splitDomains("")).toEqual([]);
+    expect(splitDomains("   \n  ")).toEqual([]);
+  });
+
+  it("does not try to validate — that is the daemon's job", () => {
+    // Splitting decides boundaries only. A bad entry has to reach the daemon to
+    // come back with a reason the user can act on.
+    expect(splitDomains("not a domain")).toEqual(["not", "a", "domain"]);
   });
 });
 
