@@ -27,7 +27,7 @@ type Sessions interface {
 	RemoveCustom(raw string) error
 	Schedules() ([]schedule.Schedule, []string)
 	PutSchedule(s schedule.Schedule) error
-	Commit(mode session.Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (session.Session, error)
+	Commit(p session.Plan) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)
 	Challenge() (session.Challenge, error)
@@ -57,6 +57,22 @@ type sessionView struct {
 	DurationSeconds       int `json:"durationSeconds"`
 	GraceRemainingSeconds int `json:"graceRemainingSeconds"`
 	GraceSeconds          int `json:"graceSeconds"`
+
+	// Cycle is nil for a commitment session. Present for Hard Pomodoro, which is
+	// what the spec's /api/state example promised all along.
+	Cycle *cycleView `json:"cycle"`
+}
+
+type cycleView struct {
+	Index int `json:"index"` // 1-based, for display
+	Of    int `json:"of"`
+	// Phase is "focus" or "break". The dial needs to know which countdown it is
+	// drawing, and BREAK is not a lock.
+	Phase string `json:"phase"`
+	// BreakSeconds is the denominator for the break arc; BreakRemainingSeconds
+	// is what it counts down.
+	BreakSeconds          int `json:"breakSeconds"`
+	BreakRemainingSeconds int `json:"breakRemainingSeconds"`
 }
 
 type escapeView struct {
@@ -104,6 +120,27 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if sess.State == session.Arming {
 		view.GraceRemainingSeconds = int(sess.Grace.Remaining(c, nil).Seconds())
 	}
+	if sess.Mode == session.ModePomodoro && sess.CycleOf > 0 {
+		phase := "focus"
+		if sess.State == session.Break {
+			phase = "break"
+		}
+		view.Cycle = &cycleView{
+			Index:                 sess.CycleIndex + 1,
+			Of:                    sess.CycleOf,
+			Phase:                 phase,
+			BreakSeconds:          int(sess.BreakDuration.Seconds()),
+			BreakRemainingSeconds: int(sess.Break.Remaining(c, nil).Seconds()),
+		}
+		// A break enforces nothing, so Active() is false and the block above
+		// leaves the target fields at zero. The dial still needs a countdown.
+		if sess.State == session.Break {
+			view.RemainingSeconds = view.Cycle.BreakRemainingSeconds
+			view.DurationSeconds = view.Cycle.BreakSeconds
+			at := sess.Break.TargetAt(c, nil)
+			view.TargetAt = &at
+		}
+	}
 
 	writeJSON(w, http.StatusOK, stateResponse{
 		Session:  view,
@@ -121,6 +158,10 @@ type commitRequest struct {
 	BlocklistIDs        []string `json:"blocklistIds"`
 	GraceSeconds        int      `json:"graceSeconds"`
 	AcceptTamperPenalty bool     `json:"acceptTamperPenalty"`
+
+	// Pomodoro only. DurationMinutes is one focus interval, not the total.
+	BreakMinutes int `json:"breakMinutes"`
+	Cycles       int `json:"cycles"`
 }
 
 func (s *Server) commit(w http.ResponseWriter, r *http.Request) {
@@ -133,25 +174,32 @@ func (s *Server) commit(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = session.ModeCommitment
 	}
-	// Refuse a mode we do not implement rather than running a different one.
-	// ModePomodoro exists as a constant and two Session fields and nothing
-	// drives them, so a caller asking for pomodoro used to get 200, see
-	// "mode":"pomodoro" echoed back in state, and receive a plain commitment
-	// session. An API that reports success for work it did not do is worse than
-	// one that refuses.
-	if mode != session.ModeCommitment {
+	// Refuse a mode we do not implement rather than running a different one. An
+	// API that reports success for work it did not do is worse than one that
+	// refuses.
+	if mode != session.ModeCommitment && mode != session.ModePomodoro {
 		writeJSON(w, http.StatusBadRequest, detailBody("unsupported_mode", string(mode)))
 		return
 	}
-	grace := time.Duration(req.GraceSeconds) * time.Second
 
-	sess, err := s.sess.Commit(mode, time.Duration(req.DurationMinutes)*time.Minute,
-		req.BlocklistIDs, grace, req.AcceptTamperPenalty)
+	sess, err := s.sess.Commit(session.Plan{
+		Mode:     mode,
+		Duration: time.Duration(req.DurationMinutes) * time.Minute,
+		ListIDs:  req.BlocklistIDs,
+		Grace:    time.Duration(req.GraceSeconds) * time.Second,
+		Penalty:  req.AcceptTamperPenalty,
+		Break:    time.Duration(req.BreakMinutes) * time.Minute,
+		Cycles:   req.Cycles,
+	})
 	switch {
 	case errors.Is(err, session.ErrActive):
 		writeJSON(w, http.StatusConflict, errBody("active"))
 	case errors.Is(err, session.ErrDuration):
 		writeJSON(w, http.StatusBadRequest, errBody("duration_out_of_range"))
+	case errors.Is(err, session.ErrCycles):
+		writeJSON(w, http.StatusBadRequest, errBody("cycles_out_of_range"))
+	case errors.Is(err, session.ErrBreak):
+		writeJSON(w, http.StatusBadRequest, errBody("break_out_of_range"))
 	case err != nil:
 		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
 	default:

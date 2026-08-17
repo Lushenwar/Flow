@@ -72,10 +72,14 @@ export const api = {
 
   commit: (body: {
     mode: string;
+    /** In pomodoro this is ONE focus interval, not the total. */
     durationMinutes: number;
     blocklistIds: string[];
     graceSeconds?: number;
     acceptTamperPenalty?: boolean;
+    /** Pomodoro only; the daemon refuses the mode without them. */
+    cycles?: number;
+    breakMinutes?: number;
   }) => call("/api/session", { method: "POST", body: JSON.stringify(body) }),
 
   /** Valid only in ARMING. Anywhere else this is a 409, by design. */

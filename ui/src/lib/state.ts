@@ -7,8 +7,18 @@ export type SessionState =
   | "IDLE"
   | "ARMING"
   | "FOCUS"
+  | "BREAK"
   | "RELEASING"
   | "COMPLETE";
+
+/** Present only for Hard Pomodoro. Null for a commitment session. */
+export interface CycleView {
+  index: number; // 1-based
+  of: number;
+  phase: "focus" | "break";
+  breakSeconds: number;
+  breakRemainingSeconds: number;
+}
 
 export interface SessionView {
   state: SessionState;
@@ -21,6 +31,7 @@ export interface SessionView {
   durationSeconds: number;
   graceRemainingSeconds: number;
   graceSeconds: number;
+  cycle: CycleView | null;
 }
 
 export interface BaselineRow {
@@ -197,6 +208,14 @@ export function arcFraction(session: SessionView): number {
         session.graceSeconds - session.graceRemainingSeconds,
         session.graceSeconds,
       );
+    case "BREAK":
+      // The break's own countdown. Reusing the interval denominator would leave
+      // the ring almost motionless through the one phase that is short.
+      return progressFraction(
+        (session.cycle?.breakSeconds ?? 0) -
+          (session.cycle?.breakRemainingSeconds ?? 0),
+        session.cycle?.breakSeconds ?? 0,
+      );
     case "FOCUS":
     case "RELEASING":
       return progressFraction(
@@ -222,6 +241,9 @@ export function dialAction(session: SessionView): DialAction {
     case "COMPLETE":
       return "commit";
     case "ARMING":
+    // A break enforces nothing beyond baseline, so the tap declines the rest of
+    // the pomodoro rather than breaking a lock. Same verb, same endpoint.
+    case "BREAK":
       return "abort";
     default:
       return "none";
@@ -305,6 +327,10 @@ export function dialText(
       ? "1 block always on"
       : `${baselineOnCount} blocks always on`;
 
+  // "2 of 4 · " prefixes the status in Hard Pomodoro. The interval you are in is
+  // the thing you are enduring, so it belongs next to the state, not in a corner.
+  const cycle = session.cycle ? `${session.cycle.index} of ${session.cycle.of} · ` : "";
+
   switch (session.state) {
     case "ARMING":
       return {
@@ -315,8 +341,16 @@ export function dialText(
     case "FOCUS":
       return {
         countdown: formatCountdown(remaining),
-        status: "locked in",
+        status: `${cycle}locked in`,
         hint: "no way to stop this",
+      };
+    case "BREAK":
+      return {
+        countdown: formatCountdown(remaining),
+        status: `${cycle}break`,
+        // The one honest thing to say: nothing is stopping you, and the next
+        // interval starts on its own whether you are ready or not.
+        hint: "tap to end here",
       };
     case "RELEASING":
       return {

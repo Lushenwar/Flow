@@ -90,6 +90,9 @@ func (m *Manager) Load() error {
 	}
 	m.sess = s
 
+	if m.sess.State == Break {
+		m.sess.Break.Anchor, _ = m.sess.Break.Anchor.Recover(m.clock)
+	}
 	if m.sess.Active() {
 		if a, rebooted := m.sess.Target.Anchor.Recover(m.clock); rebooted {
 			m.sess.Target.Anchor = a
@@ -142,19 +145,36 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 
+// Snapshot returns the current session, ticked so a read is never stale.
+//
+// A tick that moves is a real transition — it changes enforcement and it can pay
+// the time bank — so it is applied and persisted here rather than left in memory
+// for the Run loop to notice a second later. Reads outnumber ticks by a wide
+// margin and almost none of them move, so the write happens about as often as
+// the state actually changes.
+//
+// Without this the credit was NOT in the same signed write as the transition,
+// which is the one property the crediting rule is built around: a read drove the
+// transition into COMPLETE, paid the bank in memory, and an unclean kill before
+// the next Run tick lost both.
 func (m *Manager) Snapshot() Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.tickLocked()
+	if m.tickLocked() {
+		m.applyLocked()
+		if err := m.persistLocked(); err != nil {
+			log.Printf("persist after read-driven transition: %v", err)
+		}
+	}
 	return m.sess
 }
 
 func (m *Manager) Clock() Clock { return m.clock }
 
 // Commit starts a session. Blocks apply immediately, during ARMING.
-func (m *Manager) Commit(mode Mode, dur time.Duration, ids []string, grace time.Duration, penalty bool) (Session, error) {
+func (m *Manager) Commit(p Plan) (Session, error) {
 	return m.transition("session_commit", func(s Session) (Session, error) {
-		return s.Commit(m.clock, mode, dur, ids, grace, penalty)
+		return s.Commit(m.clock, p)
 	})
 }
 
@@ -260,20 +280,27 @@ func (m *Manager) tickLocked() bool {
 	return moved
 }
 
-// creditLocked pays the time bank on the transition into COMPLETE, exactly once.
-// The Credited flag is written in the same signed row as the state, so a crash
-// between the two cannot double-pay or skip.
+// creditLocked pays the time bank for every focus interval that has finished
+// and not yet been paid for. CreditedIntervals is written in the same signed row
+// as the state, so a crash between the two cannot double-pay or skip.
 //
-// Aborted and escaped sessions never reach COMPLETE and so earn nothing —
-// otherwise "start, escape immediately" becomes a minute farm.
+// A loop rather than a single credit because Tick cascades: a daemon that was
+// down for two hours can cross several pomodoro intervals in one tick, and
+// crediting only the final transition would quietly lose the rest. Comparing a
+// count against IntervalsCompleted makes the arithmetic independent of how many
+// steps it took to get here.
+//
+// Aborted and escaped sessions never reach the end of an interval and so earn
+// nothing — otherwise "start, escape immediately" becomes a minute farm.
 func (m *Manager) creditLocked() {
-	if m.sess.State != Complete || m.sess.Credited {
-		return
+	for m.sess.CreditedIntervals < m.sess.IntervalsCompleted() {
+		interval := m.sess.Target.Duration
+		earned := time.Duration(float64(interval) * CreditRate)
+		m.bank.Credit(interval)
+		m.sess.CreditedIntervals++
+		m.event("bank_credited", fmt.Sprintf(`{"seconds":%d,"interval":%d}`,
+			int(earned.Seconds()), m.sess.CreditedIntervals))
 	}
-	earned := time.Duration(float64(m.sess.Target.Duration) * CreditRate)
-	m.bank.Credit(m.sess.Target.Duration)
-	m.sess.Credited = true
-	m.event("bank_credited", fmt.Sprintf(`{"seconds":%d}`, int(earned.Seconds())))
 }
 
 func (m *Manager) checkpointLocked() {
@@ -283,6 +310,12 @@ func (m *Manager) checkpointLocked() {
 		if r := m.baseline.Rules[id]; r.Pending.Requested {
 			r.Pending.Deadline.Anchor = r.Pending.Deadline.Anchor.Checkpoint(m.clock)
 		}
+	}
+	// A break is not Active — nothing is enforced during one — but its countdown
+	// still has to survive a reboot, or the machine comes back owing intervals
+	// with no idea when the next one starts.
+	if m.sess.State == Break {
+		m.sess.Break.Anchor = m.sess.Break.Anchor.Checkpoint(m.clock)
 	}
 	if !m.sess.Active() {
 		return
