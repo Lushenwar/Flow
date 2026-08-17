@@ -161,6 +161,40 @@ func TestNoStopVerbOnceLocked(t *testing.T) {
 	}
 }
 
+// ModePomodoro is a constant and two unused Session fields. Accepting it
+// returned 200 and ran a commitment session, which is the API reporting success
+// for work it did not do.
+func TestUnimplementedModeIsRefusedRatherThanQuietlySubstituted(t *testing.T) {
+	h, _ := sessionServer(t)
+
+	rec := do(t, h, "POST", "/api/session", commitRequest{
+		Mode: "pomodoro", DurationMinutes: 25,
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("pomodoro returned %d, want 400 until it is built", rec.Code)
+	}
+	var body map[string]string
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body["error"] != "unsupported_mode" {
+		t.Fatalf("error %q", body["error"])
+	}
+	if got := getState(t, h).Session.State; got != session.Idle {
+		t.Fatalf("a refused commit started something anyway: %s", got)
+	}
+
+	// An unknown mode is refused the same way, rather than falling through.
+	if code := do(t, h, "POST", "/api/session", commitRequest{
+		Mode: "nonsense", DurationMinutes: 25,
+	}).Code; code != http.StatusBadRequest {
+		t.Fatalf("unknown mode returned %d", code)
+	}
+
+	// Empty still defaults to commitment — that is the documented behaviour.
+	if code := do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 25}).Code; code != http.StatusOK {
+		t.Fatalf("empty mode returned %d, want the commitment default", code)
+	}
+}
+
 func TestSecondSessionRejectedWhileActive(t *testing.T) {
 	h, _ := sessionServer(t)
 	do(t, h, "POST", "/api/session", commitRequest{DurationMinutes: 25})

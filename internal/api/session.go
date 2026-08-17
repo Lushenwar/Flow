@@ -133,6 +133,16 @@ func (s *Server) commit(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = session.ModeCommitment
 	}
+	// Refuse a mode we do not implement rather than running a different one.
+	// ModePomodoro exists as a constant and two Session fields and nothing
+	// drives them, so a caller asking for pomodoro used to get 200, see
+	// "mode":"pomodoro" echoed back in state, and receive a plain commitment
+	// session. An API that reports success for work it did not do is worse than
+	// one that refuses.
+	if mode != session.ModeCommitment {
+		writeJSON(w, http.StatusBadRequest, detailBody("unsupported_mode", string(mode)))
+		return
+	}
 	grace := time.Duration(req.GraceSeconds) * time.Second
 
 	sess, err := s.sess.Commit(mode, time.Duration(req.DurationMinutes)*time.Minute,
