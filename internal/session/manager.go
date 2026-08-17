@@ -308,16 +308,28 @@ func (m *Manager) checkDriftLocked() {
 
 // rulesLocked is the union input: baseline ∪ session ∪ schedules.
 //
-// A live bank spend is the single exception in the whole app — it returns
-// nothing, opening the blocklist for the window that was paid for up front. It
-// can only start from IDLE and cannot be cancelled, so it never weakens a lock.
+// A live bank spend is the single exception in the whole app — it suppresses
+// the rules you earned the right to suspend, for the window that was paid for
+// up front. It can only start from IDLE and cannot be cancelled, so it never
+// weakens a lock.
+//
+// It suppresses SESSION and SCHEDULE rules only. Baseline survives a spend,
+// because baseline is not "off" and never was:
+//
+//	A user in IDLE with gambling and adult content on baseline is being
+//	protected right now.
+//
+// Earning minutes by focusing buys back the things you are avoiding for
+// productivity. It does not buy back the things you asked to be permanently
+// protected from — collapsing the two would make the bank a supported path to
+// the one outcome the app exists to prevent.
 func (m *Manager) rulesLocked() []enforce.Rule {
-	if m.bank.Spending(m.clock, nil) {
-		return nil
-	}
 	var rules []enforce.Rule
 	for _, id := range m.baseline.EnabledIDs() {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Baseline})
+	}
+	if m.bank.Spending(m.clock, nil) {
+		return rules
 	}
 	for _, id := range m.schedules.ActiveListIDs(m.clock.Wall()) {
 		rules = append(rules, enforce.Rule{ListID: id, Source: enforce.Schedule})

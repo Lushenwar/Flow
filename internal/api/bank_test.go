@@ -93,8 +93,12 @@ func TestSpendOpensTheBlocklistThenHardRelocks(t *testing.T) {
 	if b := getBank(t, h); !b.Spending || b.BalanceSeconds != 0 {
 		t.Fatalf("after spend: %+v — the whole balance is deducted up front", b)
 	}
-	if len(getState(t, h).Effective.BlockedIDs) != 0 {
-		t.Fatal("a spend opens the blocklist for the window that was paid for")
+
+	// Baseline is NOT lifted by a spend. Recreation time buys back the things
+	// you avoid for productivity, never the things you asked to be permanently
+	// protected from.
+	if getState(t, h).Effective.Attribution["preset.adult"] != "baseline" {
+		t.Fatal("a spend unblocked a baseline rule — earning focus minutes must not open adult content")
 	}
 
 	c.tick(10 * time.Minute)

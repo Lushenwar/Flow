@@ -287,6 +287,50 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	}
 }
 
+// A spend suspends what you earned the right to suspend, and nothing else.
+// Baseline is not "off": the dial reading "not focusing" never means nothing is
+// enforced, and neither does an open recreation window.
+func TestSpendSuspendsSchedulesButNeverBaseline(t *testing.T) {
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC) // inside the delivery window
+	m, rec := newManager(t, c, t.TempDir())
+
+	del, err := schedule.New("sched.delivery", "Delivery", []string{"preset.delivery"}, "18:00", "21:00", time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PutSchedule(del); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("setup: the schedule should be in force")
+	}
+
+	m.mu.Lock()
+	m.bank.BalanceSeconds = 600
+	m.mu.Unlock()
+	if err := m.SpendBank(10 * time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := rec.last.Domains["ubereats.com"]; ok {
+		t.Fatal("a spend must suspend the schedule you paid to suspend")
+	}
+	if got := rec.last.Domains["pornhub.com"]; got != enforce.Baseline {
+		t.Fatal("a spend unblocked baseline — earning focus minutes must not open adult content")
+	}
+
+	// And the schedule comes back when the window closes.
+	c.tick(10 * time.Minute)
+	m.mu.Lock()
+	m.tickLocked()
+	m.applyLocked()
+	m.mu.Unlock()
+	if _, ok := rec.last.Domains["ubereats.com"]; !ok {
+		t.Fatal("enforcement must hard re-lock at expiry")
+	}
+}
+
 func TestTamperedSessionRowStartsIdleRatherThanCrashing(t *testing.T) {
 	dir := t.TempDir()
 	c := newFake()
