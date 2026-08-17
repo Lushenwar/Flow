@@ -662,17 +662,25 @@ func (m *Manager) loadExtrasLocked() {
 // No enforcement change is needed: ActiveAt always evaluates in the pinned zone,
 // so the window already holds for its full length. The event exists because the
 // log is more useful than the punishment.
+//
+// Compared by OFFSET, not by name. Names cannot do this job on the platform this
+// runs on: time.Local.String() returns the literal "Local" on Windows, and so
+// does the TZ captured at creation, so `s.TZ != system` was "Local" != "Local"
+// and the branch was dead — the detection for the exact attack it was written
+// for could never fire. That is the same trap the pinning itself already fell
+// into and fixed with OffsetSeconds; only the logging half was left behind.
 func (m *Manager) checkTimezoneLocked() {
 	now := m.clock.Wall()
-	system := time.Local.String()
+	_, systemOffset := now.Zone()
 	for _, s := range m.schedules.Active(now) {
-		if s.TZ != system {
-			m.event("schedule_timezone_changed", fmt.Sprintf(
-				`{"id":%q,"pinned":%q,"system":%q,"holdsUntil":%q}`,
-				s.ID, s.TZ, system, s.EndsAt(now).Format(time.RFC3339)))
-			log.Printf("schedule %s pinned to %s but system is %s; holding until %s",
-				s.ID, s.TZ, system, s.EndsAt(now).Format(time.RFC3339))
+		if s.OffsetSeconds == systemOffset {
+			continue
 		}
+		m.event("schedule_timezone_changed", fmt.Sprintf(
+			`{"id":%q,"pinnedOffset":%d,"systemOffset":%d,"holdsUntil":%q}`,
+			s.ID, s.OffsetSeconds, systemOffset, s.EndsAt(now).Format(time.RFC3339)))
+		log.Printf("schedule %s pinned to UTC%+d but system is UTC%+d; holding until %s",
+			s.ID, s.OffsetSeconds/3600, systemOffset/3600, s.EndsAt(now).Format(time.RFC3339))
 	}
 }
 

@@ -287,6 +287,81 @@ func TestCreditIsWrittenWithTheTransition(t *testing.T) {
 	}
 }
 
+// Moving the machine's timezone under an active scheduled lock is a tamper
+// event. The window already holds — ActiveAt evaluates in the pinned offset —
+// but the log has to say so, and it could not: the check compared
+// time.Local.String() to the captured TZ name, both of which are the literal
+// "Local" on Windows, so the branch was dead on the platform it defends.
+func TestTimezoneChangeUnderAnActiveScheduleIsLogged(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	// 19:00 UTC. The machine claims UTC; the schedule was pinned at UTC-5.
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// Pinned to UTC-5, where 19:00 UTC is 14:00 — inside a 13:00-16:00 window.
+	m.mu.Lock()
+	m.schedules.Add(schedule.Schedule{
+		ID: "sched.pinned", Name: "Pinned", ListIDs: []string{"preset.delivery"},
+		Start: "13:00", End: "16:00", TZ: "Local", OffsetSeconds: -5 * 3600, Enabled: true,
+	})
+	m.checkTimezoneLocked()
+	m.mu.Unlock()
+
+	evs, err := st.Events(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		if e.Kind == "schedule_timezone_changed" {
+			return
+		}
+	}
+	t.Fatal("a timezone change under an active lock was not logged")
+}
+
+// The corollary: a machine that has not moved must not log a tamper event on
+// every single startup.
+func TestMatchingTimezoneLogsNothing(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	c.wall = time.Date(2026, 8, 4, 19, 0, 0, 0, time.UTC)
+
+	st, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := NewManager(st, c, &recorder{}, blocklist.Presets(), nil)
+	if err := m.Load(); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.schedules.Add(schedule.Schedule{
+		ID: "sched.utc", Name: "UTC", ListIDs: []string{"preset.delivery"},
+		Start: "18:00", End: "21:00", TZ: "UTC", OffsetSeconds: 0, Enabled: true,
+	})
+	m.checkTimezoneLocked()
+	m.mu.Unlock()
+
+	evs, _ := st.Events(0)
+	for _, e := range evs {
+		if e.Kind == "schedule_timezone_changed" {
+			t.Fatal("logged a tamper event for a machine that never moved")
+		}
+	}
+}
+
 // A spend suspends what you earned the right to suspend, and nothing else.
 // Baseline is not "off": the dial reading "not focusing" never means nothing is
 // enforced, and neither does an open recreation window.
