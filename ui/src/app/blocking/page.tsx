@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AutostartRow } from "@/components/AutostartRow";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { CustomSites } from "@/components/CustomSites";
 import { History } from "@/components/History";
@@ -151,6 +152,9 @@ export default function BlockingScreen() {
           {bankLabel(bank)}
         </p>
       )}
+
+      {/* Renders nothing in a browser: there is no window to open at login. */}
+      <AutostartRow />
 
       <History />
     </>

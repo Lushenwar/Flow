@@ -1,0 +1,93 @@
+# The check line from claude.md, run by something other than a person.
+#
+# windows-latest is required, not preferred: wfp_windows.go, resolver_windows.go,
+# procwatch_windows.go, key_windows.go and service_windows.go are all build-tagged,
+# so a Linux runner compiles the stubs and proves nothing about the code that ships.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows — the code that actually ships
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # This MUST come before anything Go. The root package embeds ui/out via
+      # go:embed, which fails on a directory that does not exist, and CI is a
+      # fresh clone every single time.
+      - name: Build the frontend (go:embed needs ui/out to exist)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: go test
+        run: go test . ./cmd/... ./internal/...
+
+      # Named packages rather than ./... because ui/node_modules ships a stray
+      # Go package (flatted/golang) that ./... picks up as part of this module.
+      - name: go vet
+        run: go vet . ./cmd/... ./internal/...
+
+      - name: extension tests
+        working-directory: extension
+        run: npm test
+
+      - name: ui tests
+        working-directory: ui
+        run: npm test
+
+      - name: ui typecheck
+        working-directory: ui
+        run: npm run typecheck
+
+      - name: ui lint
+        working-directory: ui
+        run: npm run lint
+
+  # Cheap insurance that the non-Windows stubs still compile. They are the
+  # starting point for the macOS and Linux enforcers, and a stub that stopped
+  # building six months ago is a stub nobody can start from.
+  stubs:
+    name: linux — the platform stubs still build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the frontend (go:embed needs ui/out to exist)
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+      - name: go build
+        run: go build ./cmd/... ./internal/...

@@ -146,6 +146,12 @@ Section "uninstall"
     nsExec::ExecToLog 'taskkill /F /IM ${PRODUCT_EXECUTABLE}'
     Pop $0
 
+    # The window's autostart entry, if the user turned it on. Written to HKCU by
+    # the app rather than by this installer, so it is deleted here rather than by
+    # a matching WriteRegStr — leaving it behind is a Run key pointing at a path
+    # that no longer exists, which is exactly the residue "zero residue" means.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}"
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     RMDir /r $INSTDIR
