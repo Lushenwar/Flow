@@ -20,6 +20,10 @@ interface WailsApp {
   SetMini(mini: boolean): Promise<void>;
   Minimise(): Promise<void>;
   Quit(): Promise<void>;
+  /** The WINDOW's autostart, not the daemon's. The daemon is a service that
+   *  starts itself, and nothing in this UI can change that. */
+  AutostartEnabled(): Promise<boolean>;
+  SetAutostart(on: boolean): Promise<void>;
 }
 
 declare global {

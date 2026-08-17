@@ -24,7 +24,15 @@ type App struct {
 	ctx context.Context
 }
 
-func (a *App) startup(ctx context.Context) { a.ctx = ctx }
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+	// Started by the Run key rather than by a person: come up out of the way.
+	// A full-size window appearing over whatever you opened the laptop to do is
+	// an irritant, and an irritant is what gets an autostart entry deleted.
+	if launchedByAutostart() {
+		wruntime.WindowMinimise(ctx)
+	}
+}
 
 // SetMini shrinks the window to the timer and pins it above everything else.
 //
