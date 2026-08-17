@@ -6,6 +6,12 @@ import { CommitDialog } from "@/components/CommitDialog";
 import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
 import { EscapeDialog } from "@/components/EscapeDialog";
+import {
+  CycleChips,
+  ModeChips,
+  POMODORO_BREAK_MINUTES,
+  type Mode,
+} from "@/components/ModeChips";
 import { PopOutTimer } from "@/components/PopOutTimer";
 import { useIsDesktop } from "@/lib/desktop";
 import { api } from "@/lib/flow-client";
@@ -28,6 +34,8 @@ export default function FocusScreen() {
   // Before the loading return: hook order cannot depend on whether state arrived.
   const isDesktop = useIsDesktop();
   const [minutes, setMinutes] = useState<number>(DURATIONS[1]);
+  const [mode, setMode] = useState<Mode>("commitment");
+  const [cycles, setCycles] = useState(4);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [escapeOpen, setEscapeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,10 +72,14 @@ export default function FocusScreen() {
     setBusy(true);
     try {
       await api.commit({
-        mode: "commitment",
+        mode,
+        // In pomodoro this is one interval, not the total.
         durationMinutes: minutes,
         blocklistIds: SESSION_LISTS,
         acceptTamperPenalty,
+        ...(mode === "pomodoro"
+          ? { cycles, breakMinutes: POMODORO_BREAK_MINUTES }
+          : {}),
       });
     } finally {
       setBusy(false);
@@ -87,12 +99,31 @@ export default function FocusScreen() {
         onTap={tap}
       />
 
-      <div className="mt-5">
-        <DurationChips
-          minutes={minutes}
+      <div className="mt-5 flex flex-col items-center gap-2">
+        <ModeChips
+          mode={mode}
           disabled={action !== "commit" || busy}
-          onPick={setMinutes}
+          onPick={setMode}
         />
+        <div className="flex gap-2">
+          <DurationChips
+            minutes={minutes}
+            disabled={action !== "commit" || busy}
+            onPick={setMinutes}
+          />
+          {mode === "pomodoro" && (
+            <CycleChips
+              cycles={cycles}
+              disabled={action !== "commit" || busy}
+              onPick={setCycles}
+            />
+          )}
+        </div>
+        {mode === "pomodoro" && action === "commit" && (
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {cycles} × {minutes}m focus, {POMODORO_BREAK_MINUTES}m breaks
+          </p>
+        )}
       </div>
 
       {/* Read-only. Choosing a session's blocklist here would be a bypass: a
@@ -171,6 +202,8 @@ export default function FocusScreen() {
           minutes={minutes}
           blocklistIds={SESSION_LISTS}
           escapeMinutes={ESCAPE_MINUTES}
+          cycles={mode === "pomodoro" ? cycles : undefined}
+          breakMinutes={mode === "pomodoro" ? POMODORO_BREAK_MINUTES : undefined}
           onCancel={() => setDialogOpen(false)}
           onConfirm={commit}
         />

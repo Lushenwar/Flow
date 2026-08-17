@@ -34,6 +34,7 @@ const session = (over: Partial<SessionView> = {}): SessionView => ({
   durationSeconds: 0,
   graceRemainingSeconds: 0,
   graceSeconds: 0,
+  cycle: null,
   ...over,
 });
 
@@ -204,6 +205,66 @@ describe("arcFraction", () => {
 
   it("survives a zero denominator", () => {
     expect(arcFraction(session({ state: "FOCUS" }))).toBe(0);
+  });
+});
+
+describe("pomodoro", () => {
+  const cycle = (over: Partial<NonNullable<SessionView["cycle"]>> = {}) => ({
+    index: 2,
+    of: 4,
+    phase: "focus" as const,
+    breakSeconds: 300,
+    breakRemainingSeconds: 0,
+    ...over,
+  });
+
+  it("puts the interval next to the state, not in a corner", () => {
+    const t = dialText(
+      session({ state: "FOCUS", remainingSeconds: 600, cycle: cycle() }),
+      2,
+      25,
+    );
+    expect(t.status).toBe("2 of 4 · locked in");
+  });
+
+  it("says break, and says the tap works", () => {
+    const t = dialText(
+      session({
+        state: "BREAK",
+        remainingSeconds: 180,
+        cycle: cycle({ phase: "break", breakRemainingSeconds: 180 }),
+      }),
+      2,
+      25,
+    );
+    expect(t.status).toBe("2 of 4 · break");
+    expect(t.hint).toBe("tap to end here");
+  });
+
+  it("leaves a commitment session's status alone", () => {
+    const t = dialText(session({ state: "FOCUS", remainingSeconds: 600 }), 2, 25);
+    expect(t.status).toBe("locked in");
+  });
+
+  it("sweeps the break's own countdown, not the interval's", () => {
+    // 5-minute break, 2 minutes gone. Against the 25-minute interval the ring
+    // would look motionless through the one phase that is short.
+    const s = session({
+      state: "BREAK",
+      durationSeconds: 1500,
+      remainingSeconds: 1500,
+      cycle: cycle({ phase: "break", breakSeconds: 300, breakRemainingSeconds: 180 }),
+    });
+    expect(arcFraction(s)).toBeCloseTo(0.4);
+  });
+
+  it("makes the tap end the pomodoro during a break", () => {
+    // A break enforces nothing beyond baseline, so there is no lock to break.
+    expect(dialAction(session({ state: "BREAK", cycle: cycle() }))).toBe("abort");
+  });
+
+  it("keeps the tap inert inside an interval", () => {
+    expect(dialAction(session({ state: "FOCUS", cycle: cycle() }))).toBe("none");
   });
 });
 

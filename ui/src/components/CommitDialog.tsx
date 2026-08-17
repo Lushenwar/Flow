@@ -7,6 +7,9 @@ interface Props {
   minutes: number;
   blocklistIds: string[];
   escapeMinutes: number;
+  /** Pomodoro only. Omitted for a single commitment block. */
+  cycles?: number;
+  breakMinutes?: number;
   onCancel: () => void;
   onConfirm: (acceptTamperPenalty: boolean) => void;
 }
@@ -21,10 +24,13 @@ export function CommitDialog({
   minutes,
   blocklistIds,
   escapeMinutes,
+  cycles,
+  breakMinutes,
   onCancel,
   onConfirm,
 }: Props) {
   const [penalty, setPenalty] = useState(false);
+  const pomodoro = !!cycles && cycles > 1;
 
   return (
     <div
@@ -32,9 +38,23 @@ export function CommitDialog({
       style={{ background: "rgba(0,0,0,0.45)" }}
     >
       <div className="card w-full max-w-[340px]">
-        <p className="text-[14px] mb-3">Commit to {minutes} minutes?</p>
+        <p className="text-[14px] mb-3">
+          {pomodoro
+            ? `Commit to ${cycles} × ${minutes} minutes?`
+            : `Commit to ${minutes} minutes?`}
+        </p>
 
         <dl className="text-[12px] space-y-2 mb-4" style={{ color: "var(--text-secondary)" }}>
+          {pomodoro && (
+            <div>
+              <dt className="inline">Shape: </dt>
+              <dd className="inline">
+                {cycles} locked intervals of {minutes} minutes, with{" "}
+                {breakMinutes}-minute breaks between them. Each interval locks on
+                its own; the breaks do not.
+              </dd>
+            </div>
+          )}
           <div>
             <dt className="inline">Blocks: </dt>
             <dd className="inline">
@@ -46,14 +66,17 @@ export function CommitDialog({
           <div>
             <dt className="inline">Stopping: </dt>
             <dd className="inline">
-              There is no off switch. Ending early takes {escapeMinutes} minutes,
-              and everything stays blocked while you wait.
+              There is no off switch{pomodoro ? " inside an interval" : ""}. Ending
+              early takes {escapeMinutes} minutes, and everything stays blocked
+              while you wait.
+              {pomodoro && " Between intervals you can stop for free."}
             </dd>
           </div>
           <div>
             <dt className="inline">Backing out: </dt>
             <dd className="inline">
               You have 15 seconds after committing. Blocks are live immediately.
+              {pomodoro && " The later intervals start without a grace window."}
             </dd>
           </div>
         </dl>
