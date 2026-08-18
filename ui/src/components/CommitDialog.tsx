@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Modal } from "@/components/Modal";
 import { listName } from "@/lib/state";
 
 interface Props {
@@ -33,11 +34,8 @@ export function CommitDialog({
   const pomodoro = !!cycles && cycles > 1;
 
   return (
-    <div
-      className="fixed inset-0 z-10 flex items-center justify-center p-6"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-    >
-      <div className="card w-full max-w-[340px]">
+    <Modal onClose={onCancel} label="Confirm this session">
+      <>
         <p className="text-[14px] mb-3">
           {pomodoro
             ? `Commit to ${cycles} × ${minutes} minutes?`
@@ -110,7 +108,7 @@ export function CommitDialog({
             Commit
           </button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

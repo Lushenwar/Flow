@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Modal } from "@/components/Modal";
 import { ApiError, api } from "@/lib/flow-client";
 import { formatCountdown, secondsUntil, type SessionView } from "@/lib/state";
 
@@ -47,11 +48,8 @@ export function EscapeDialog({ session, now, onClose, onReleased }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-10 flex items-center justify-center p-6"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-    >
-      <div className="card w-full max-w-[380px]">
+    <Modal onClose={onClose} label="End this session early">
+      <>
         <p className="text-[14px] mb-3">End this session early</p>
 
         {!ready ? (
@@ -120,7 +118,7 @@ export function EscapeDialog({ session, now, onClose, onReleased }: Props) {
             </button>
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

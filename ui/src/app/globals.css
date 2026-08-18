@@ -55,3 +55,22 @@ body {
   border-radius: 12px;
   padding: 20px;
 }
+
+/*
+  There was no focus indicator anywhere in the app. Keyboard users had a dial,
+  chips and switches they could reach and could not see.
+
+  :focus-visible rather than :focus, so a mouse click on the dial does not leave
+  a ring behind — the browser already knows the difference and the whole point of
+  the pseudo-class is not having to guess.
+*/
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The dialog's own backdrop, matching the div-over-page it replaced. */
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
