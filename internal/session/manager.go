@@ -43,11 +43,11 @@ type Enforcement interface{ Set(enforce.Effective) }
 // Manager owns the session and is the only thing that writes it. The UI owns
 // zero authority: delete the UI mid-session and enforcement is unaffected.
 type Manager struct {
-	mu       sync.Mutex
-	st       *store.Store
-	clock    Clock
-	enf      Enforcement
-	cat      blocklist.Catalog
+	mu        sync.Mutex
+	st        *store.Store
+	clock     Clock
+	enf       Enforcement
+	cat       blocklist.Catalog
 	sess      Session
 	baseline  *Baseline
 	challenge Challenge
@@ -61,7 +61,17 @@ type Manager struct {
 	sessionLists []string
 	// allow is the user's escape list for default-deny windows.
 	allow []string
+	// written is the last value persisted per key, so an unchanged row is not
+	// re-signed and rewritten on every tick.
+	written map[string]string
 }
+
+// ponytail: no commit rate limit. claudev2.md proposed one to bound ARMING/abort
+// churn, and writing it made the case against it — aborting and immediately
+// reconsidering is the grace window working, not abuse, and a cooldown turns
+// that into an error. The row-level dirty check above removes most of the cost
+// it was meant to address: churn now writes one row instead of seven. Revisit
+// if a profile ever shows the writes mattering.
 
 // DefaultSessionLists is what a session covers before anyone changes it.
 var DefaultSessionLists = []string{"preset.video", "preset.doomscroll", "preset.gaming"}
@@ -788,54 +798,43 @@ func (m *Manager) tickBaselineLocked() bool {
 	return len(fired) > 0
 }
 
+// persistLocked writes the rows whose contents actually changed.
+//
+// It used to marshal and write all six every time, so a single dial tap cost
+// six signed writes plus an event — and ARMING/abort churn is unbounded. The
+// hash comparison is cheaper than the write it avoids, and the correctness
+// argument is simple: a row nobody changed does not need re-signing, because
+// the signature covers contents rather than freshness.
 func (m *Manager) persistLocked() error {
-	b, err := json.Marshal(m.sess)
-	if err != nil {
-		return err
+	rows := []struct {
+		key string
+		val any
+	}{
+		{storeKey, m.sess},
+		{baselineKey, m.baseline},
+		{bankKey, m.bank},
+		{schedulesKey, m.schedules},
+		{customKey, m.custom},
+		{sessionListsKey, m.sessionLists},
+		{allowKey, m.allow},
 	}
-	if err := m.st.Put(storeKey, string(b)); err != nil {
-		return err
+	if m.written == nil {
+		m.written = make(map[string]string, len(rows))
 	}
-	bl, err := json.Marshal(m.baseline)
-	if err != nil {
-		return err
+	for _, r := range rows {
+		b, err := json.Marshal(r.val)
+		if err != nil {
+			return err
+		}
+		if m.written[r.key] == string(b) {
+			continue
+		}
+		if err := m.st.Put(r.key, string(b)); err != nil {
+			return err
+		}
+		m.written[r.key] = string(b)
 	}
-	if err := m.st.Put(baselineKey, string(bl)); err != nil {
-		return err
-	}
-	bk, err := json.Marshal(m.bank)
-	if err != nil {
-		return err
-	}
-	if err := m.st.Put(bankKey, string(bk)); err != nil {
-		return err
-	}
-	sc, err := json.Marshal(m.schedules)
-	if err != nil {
-		return err
-	}
-	if err := m.st.Put(schedulesKey, string(sc)); err != nil {
-		return err
-	}
-	cu, err := json.Marshal(m.custom)
-	if err != nil {
-		return err
-	}
-	if err := m.st.Put(customKey, string(cu)); err != nil {
-		return err
-	}
-	sl, err := json.Marshal(m.sessionLists)
-	if err != nil {
-		return err
-	}
-	if err := m.st.Put(sessionListsKey, string(sl)); err != nil {
-		return err
-	}
-	al, err := json.Marshal(m.allow)
-	if err != nil {
-		return err
-	}
-	return m.st.Put(allowKey, string(al))
+	return nil
 }
 
 // loadExtrasLocked restores the bank and schedules. A tampered row is refused

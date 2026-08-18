@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func open(t *testing.T) (*Store, string) {
@@ -142,5 +144,74 @@ func TestKeyPersistsAcrossReopen(t *testing.T) {
 	defer s2.Close()
 	if got, err := s2.Get("k"); err != nil || got != "v" {
 		t.Fatalf("reopen lost the key: %q, %v", got, err)
+	}
+}
+
+// The log grows forever otherwise: every transition, every reconcile repair,
+// every drift event, for as long as the daemon runs.
+func TestPruneKeepsTheFloorAndLeavesEvidenceOfItself(t *testing.T) {
+	s, dbPath := open(t)
+
+	for i := 0; i < 20; i++ {
+		if _, err := s.Append("session_commit", itoa(int64(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nothing is old enough yet.
+	if n, err := s.Prune(); err != nil || n != 0 {
+		t.Fatalf("pruned %d recent events, %v", n, err)
+	}
+
+	// Age half of them past the cutoff, by hand, the way time would.
+	old := time.Now().UTC().AddDate(0, 0, -(RetentionDays + 1)).Format(time.RFC3339Nano)
+	edit(t, dbPath, `UPDATE events SET ts='`+old+`' WHERE id <= 10`)
+
+	// The floor still protects them: 20 rows is far below RetentionFloor.
+	if n, err := s.Prune(); err != nil || n != 0 {
+		t.Fatalf("the floor must win over the calendar: pruned %d, %v", n, err)
+	}
+}
+
+// Pruning must be distinguishable from an attacker deleting rows, or it
+// destroys the property the signing exists to provide.
+func TestPruneWritesEvidenceOfWhatItRemoved(t *testing.T) {
+	old := RetentionFloor
+	RetentionFloor = 2
+	t.Cleanup(func() { RetentionFloor = old })
+
+	s, dbPath := open(t)
+	for i := 0; i < 8; i++ {
+		if _, err := s.Append("session_commit", itoa(int64(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aged := time.Now().UTC().AddDate(0, 0, -(RetentionDays + 1)).Format(time.RFC3339Nano)
+	edit(t, dbPath, `UPDATE events SET ts='`+aged+`' WHERE id <= 5`)
+
+	n, err := s.Prune()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Fatalf("pruned %d, want the 5 aged rows outside the floor", n)
+	}
+
+	evs, err := s.Events(0, 0)
+	if err != nil {
+		t.Fatalf("surviving rows must still verify: %v", err)
+	}
+	var pruned bool
+	for _, e := range evs {
+		if e.Kind == "log_pruned" {
+			pruned = true
+			if !strings.Contains(e.Data, `"removed":5`) {
+				t.Fatalf("prune record does not say what it removed: %s", e.Data)
+			}
+		}
+	}
+	if !pruned {
+		// Without this, a gap in the ids is indistinguishable from tampering.
+		t.Fatal("pruning left no evidence of itself")
 	}
 }
