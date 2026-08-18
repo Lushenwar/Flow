@@ -7,6 +7,7 @@ import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { CustomSites } from "@/components/CustomSites";
 import { History } from "@/components/History";
 import { ScheduleEditor } from "@/components/ScheduleEditor";
+import { SessionLists } from "@/components/SessionLists";
 import { ScheduleRowView } from "@/components/ScheduleRow";
 import { ApiError, api } from "@/lib/flow-client";
 import {
@@ -123,6 +124,12 @@ export default function BlockingScreen() {
           {refused}
         </p>
       )}
+
+      {/* Session composition, edited when calm. The daemon refuses the edit
+          mid-session; this only reports it. */}
+      <SessionLists
+        locked={state.session.state !== "IDLE" && state.session.state !== "COMPLETE"}
+      />
 
       {/* Adding a site changes the baseline rows too — the list arrives as a
           rule with its own switch — so a change here has to refresh the poll. */}

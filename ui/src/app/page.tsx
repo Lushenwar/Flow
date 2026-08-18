@@ -1,7 +1,7 @@
 "use client";
 
 import { Lock } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CommitDialog } from "@/components/CommitDialog";
 import { Dial } from "@/components/Dial";
 import { DURATIONS, DurationChips } from "@/components/DurationChips";
@@ -24,8 +24,11 @@ import {
 } from "@/lib/state";
 import { useNow, usePoll } from "@/lib/use-poll";
 
-/** What a session covers by default. Editing lives in settings, not here. */
-const SESSION_LISTS = ["preset.video", "preset.doomscroll", "preset.gaming"];
+/** Fallback only, for the moment before the daemon answers. What a session
+ *  covers is stored daemon-side and edited on the Blocking screen — never here.
+ *  Choosing it on the dial would be a bypass: a user mid-craving would deselect
+ *  YouTube and commit to a session that blocks nothing. */
+const FALLBACK_LISTS = ["preset.video", "preset.doomscroll", "preset.gaming"];
 const ESCAPE_MINUTES = 15;
 
 export default function FocusScreen() {
@@ -39,6 +42,16 @@ export default function FocusScreen() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [escapeOpen, setEscapeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sessionLists, setSessionLists] = useState<string[]>(FALLBACK_LISTS);
+
+  // Read-only here. The Blocking screen owns editing, and the daemon refuses an
+  // edit mid-session whatever this component thinks.
+  useEffect(() => {
+    api
+      .sessionLists()
+      .then((r) => r.listIds.length > 0 && setSessionLists(r.listIds))
+      .catch(() => {});
+  }, []);
 
   if (!state) {
     return <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Loading…</p>;
@@ -75,7 +88,7 @@ export default function FocusScreen() {
         mode,
         // In pomodoro this is one interval, not the total.
         durationMinutes: minutes,
-        blocklistIds: SESSION_LISTS,
+        blocklistIds: sessionLists,
         acceptTamperPenalty,
         ...(mode === "pomodoro"
           ? { cycles, breakMinutes: POMODORO_BREAK_MINUTES }
@@ -87,7 +100,7 @@ export default function FocusScreen() {
     }
   }
 
-  const covers = session.blocklistIds.length > 0 ? session.blocklistIds : SESSION_LISTS;
+  const covers = session.blocklistIds.length > 0 ? session.blocklistIds : sessionLists;
 
   return (
     <div className="flex flex-col items-center">
@@ -200,7 +213,7 @@ export default function FocusScreen() {
       {dialogOpen && (
         <CommitDialog
           minutes={minutes}
-          blocklistIds={SESSION_LISTS}
+          blocklistIds={sessionLists}
           escapeMinutes={ESCAPE_MINUTES}
           cycles={mode === "pomodoro" ? cycles : undefined}
           breakMinutes={mode === "pomodoro" ? POMODORO_BREAK_MINUTES : undefined}

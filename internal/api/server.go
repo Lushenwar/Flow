@@ -59,6 +59,9 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/blocklists", s.customAdd)
 		mux.HandleFunc("DELETE /api/blocklists/{domain}", s.customRemove)
 
+		mux.HandleFunc("GET /api/session/lists", s.sessionLists)
+		mux.HandleFunc("PUT /api/session/lists", s.putSessionLists)
+
 		mux.HandleFunc("GET /api/bank", s.bank)
 		mux.HandleFunc("POST /api/bank/spend", s.spend)
 		mux.HandleFunc("GET /api/schedules", s.schedules)

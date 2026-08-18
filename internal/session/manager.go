@@ -26,6 +26,8 @@ const (
 	schedulesKey = "schedules"
 	// customKey holds the signed list of user-added domains.
 	customKey = "custom"
+	// sessionListsKey holds what a session covers by default.
+	sessionListsKey = "sessionLists"
 	// tickEvery drives state transitions. Sub-second precision is pointless for
 	// a 25-minute lock.
 	tickEvery = time.Second
@@ -53,15 +55,53 @@ type Manager struct {
 	// it reaches the union as one list carried by a baseline rule, so it inherits
 	// the same attribution and the same 15-minute disable delay as a preset.
 	custom []string
+	// sessionLists is what a session covers by default, edited when calm.
+	sessionLists []string
 }
+
+// DefaultSessionLists is what a session covers before anyone changes it.
+var DefaultSessionLists = []string{"preset.video", "preset.doomscroll", "preset.gaming"}
 
 func NewManager(st *store.Store, c Clock, enf Enforcement, cat blocklist.Catalog, baseline []string) *Manager {
 	return &Manager{
 		st: st, clock: c, enf: enf, cat: cat,
-		sess:      New(),
-		baseline:  NewBaseline(baseline),
-		schedules: schedule.Defaults(time.Local),
+		sess:         New(),
+		baseline:     NewBaseline(baseline),
+		schedules:    schedule.Defaults(time.Local),
+		sessionLists: append([]string(nil), DefaultSessionLists...),
 	}
+}
+
+// SessionLists is what a session covers by default.
+func (m *Manager) SessionLists() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.sessionLists...)
+}
+
+// SetSessionLists changes what future sessions cover.
+//
+// Refused while a session is running, and that refusal is the entire reason
+// this lives behind its own verb instead of on the dial:
+//
+//	Choosing a session's blocklist on the dial would be a bypass: a user
+//	mid-craving would deselect YouTube and commit to a session that blocks
+//	nothing.
+//
+// A settings screen you can open mid-craving is the dial with extra clicks, so
+// the guard is on the daemon rather than on whether the UI drew the control.
+func (m *Manager) SetSessionLists(ids []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.sess.Active() || m.sess.State == Break {
+		return ErrWouldWeaken
+	}
+	m.sessionLists = append([]string(nil), ids...)
+	sort.Strings(m.sessionLists)
+	m.event("session_lists_changed", fmt.Sprintf(`{"count":%d}`, len(ids)))
+	return m.persistLocked()
 }
 
 // Load restores the session from disk and folds in any reboot that happened
@@ -689,7 +729,14 @@ func (m *Manager) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return m.st.Put(customKey, string(cu))
+	if err := m.st.Put(customKey, string(cu)); err != nil {
+		return err
+	}
+	sl, err := json.Marshal(m.sessionLists)
+	if err != nil {
+		return err
+	}
+	return m.st.Put(sessionListsKey, string(sl))
 }
 
 // loadExtrasLocked restores the bank and schedules. A tampered row is refused
@@ -720,6 +767,18 @@ func (m *Manager) loadExtrasLocked() {
 	} else if err == store.ErrTampered {
 		m.event("custom_signature_invalid", "{}")
 		log.Printf("custom domain row failed its signature; the list is empty until you re-add them")
+	}
+
+	// A tampered row keeps the defaults, which is the safe direction: a session
+	// covering more than the user last chose is a stronger lock, not a weaker one.
+	if raw, err := m.st.Get(sessionListsKey); err == nil {
+		var ids []string
+		if json.Unmarshal([]byte(raw), &ids) == nil && len(ids) > 0 {
+			m.sessionLists = ids
+		}
+	} else if err == store.ErrTampered {
+		m.event("session_lists_signature_invalid", "{}")
+		log.Printf("session list row failed its signature; falling back to the defaults")
 	}
 
 	if raw, err := m.st.Get(schedulesKey); err == nil {
