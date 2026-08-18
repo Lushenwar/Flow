@@ -79,6 +79,16 @@ export interface BankView {
   remainingSeconds: number;
 }
 
+/** The escape list for default-deny modes. `locked` mirrors whether one is in
+ *  force — the daemon decides it, the UI reports it. */
+export interface AllowList {
+  id: string;
+  name: string;
+  domains: string[];
+  locked: boolean;
+  max: number;
+}
+
 export interface CustomList {
   id: string;
   name: string;
@@ -160,6 +170,13 @@ export function eventLabel(kind: string): string | null {
     custom_added: "Sites added to your list",
     custom_removed: "Site removed from your list",
     custom_signature_invalid: "Saved custom sites failed their signature check",
+    allow_added: "Sites added to the always-reachable list",
+    allow_removed: "Site removed from the always-reachable list",
+    allow_signature_invalid: "Saved always-reachable sites failed their signature check",
+    session_lists_changed: "Changed what a session blocks",
+    schedule_saved: "Schedule saved",
+    schedule_deleted: "Schedule deleted",
+    schedule_timezone_changed: "Timezone changed under an active schedule",
   };
   // Unknown kinds are dropped rather than shown raw: service_start on every
   // launch is noise, not history.

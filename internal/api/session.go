@@ -29,6 +29,9 @@ type Sessions interface {
 	PutSchedule(s schedule.Schedule) error
 	DeleteSchedule(id string) error
 	SessionLists() []string
+	Allow() []string
+	AddAllow(raws []string) ([]string, error)
+	RemoveAllow(raw string) error
 	SetSessionLists(ids []string) error
 	Commit(p session.Plan) (session.Session, error)
 	Abort() (session.Session, error)

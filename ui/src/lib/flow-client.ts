@@ -1,4 +1,5 @@
 import type {
+  AllowList,
   AppState,
   BankView,
   BaselineRow,
@@ -138,6 +139,20 @@ export const api = {
     }),
   removeBlocked: (domain: string) =>
     call<CustomList>(`/api/blocklists/${encodeURIComponent(domain)}`, {
+      method: "DELETE",
+    }),
+
+  /** The escape list for block-everything modes. Direction is the mirror of the
+   *  blocklist: adding is refused while a default-deny window is live, removing
+   *  is always free. */
+  allowlist: () => call<AllowList>("/api/allowlist"),
+  addAllowed: (domains: string[]) =>
+    call<{ added: string[]; list: AllowList }>("/api/allowlist", {
+      method: "POST",
+      body: JSON.stringify({ domains }),
+    }),
+  removeAllowed: (domain: string) =>
+    call<AllowList>(`/api/allowlist/${encodeURIComponent(domain)}`, {
       method: "DELETE",
     }),
 

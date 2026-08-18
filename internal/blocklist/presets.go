@@ -13,6 +13,16 @@ type List struct {
 	// video ∪ doomscroll ∪ gaming and should not restate their domains.
 	Composes []string `json:"composes,omitempty"`
 
+	// DefaultDeny inverts the list: everything is refused except the permanent
+	// allowlist and the user's own allowlist. "Bedtime" and "Offline" mean
+	// "everything", which a domain list cannot express — enumerating eleven
+	// presets and calling it the internet is a lie the user only discovers by
+	// successfully browsing.
+	//
+	// Honoured by the DNS sink alone. hosts cannot express it, and a WFP
+	// default-deny is a bricked network stack rather than a blocker.
+	DefaultDeny bool `json:"defaultDeny,omitempty"`
+
 	// AllowPaths carves exceptions out of a blocked domain by URL path. The
 	// network layer cannot honour these — HTTPS means it sees `youtube.com` and
 	// never `/watch` vs `/@channel` — so they are enforced only by the browser
@@ -102,6 +112,33 @@ func (c Catalog) ResolvePaths(ids []string) map[string][]string {
 	return out
 }
 
+// DefaultDenies reports whether a list, or anything it composes, inverts the
+// blocklist. Walks the same graph Resolve does, with the same cycle guard.
+func (c Catalog) DefaultDenies(id string) bool {
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(id string) bool {
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+		l, ok := c[id]
+		if !ok {
+			return false
+		}
+		if l.DefaultDeny {
+			return true
+		}
+		for _, sub := range l.Composes {
+			if walk(sub) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(id)
+}
+
 func keys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -162,12 +199,13 @@ func Presets() Catalog {
 			AllowPaths: map[string][]string{
 				"youtube.com": {`^/@`, `^/channel/`, `^/playlist`, `^/c/`, `^/results`},
 			}},
-		// preset.bedtime and preset.offline mean "everything except the allowlist",
-		// which the domain-list model cannot express. Phase 6 gives them a
-		// default-deny flag; until then they are the union of everything named.
-		"preset.bedtime": {ID: "preset.bedtime", Name: "Bedtime",
+		// "Everything except the allowlist", which is what these two have always
+		// claimed and could not previously do. The composed lists stay so that
+		// the hosts layer — which cannot express default-deny — still blocks the
+		// obvious things, and so the effective set is never empty.
+		"preset.bedtime": {ID: "preset.bedtime", Name: "Bedtime", DefaultDeny: true,
 			Composes: []string{"preset.video", "preset.doomscroll", "preset.gaming", "preset.shopping", "preset.adult", "preset.gambling"}},
-		"preset.offline": {ID: "preset.offline", Name: "Offline",
+		"preset.offline": {ID: "preset.offline", Name: "Offline", DefaultDeny: true,
 			Composes: []string{"preset.bedtime", "preset.delivery"}},
 	}
 }

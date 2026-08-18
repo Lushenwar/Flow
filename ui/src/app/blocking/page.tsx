@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AllowList } from "@/components/AllowList";
 import { AutostartRow } from "@/components/AutostartRow";
 import { BankRow } from "@/components/BankRow";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
@@ -134,6 +135,8 @@ export default function BlockingScreen() {
       {/* Adding a site changes the baseline rows too — the list arrives as a
           rule with its own switch — so a change here has to refresh the poll. */}
       <CustomSites onChanged={refresh} />
+
+      <AllowList onChanged={refresh} />
 
       <div className="mt-5 pt-3" style={{ borderTop: "0.5px solid var(--hairline)" }}>
         <p className="text-[12px] mb-1" style={{ color: "var(--text-secondary)" }}>

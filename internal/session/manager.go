@@ -28,6 +28,8 @@ const (
 	customKey = "custom"
 	// sessionListsKey holds what a session covers by default.
 	sessionListsKey = "sessionLists"
+	// allowKey holds the user's allowlist for default-deny windows.
+	allowKey = "allow"
 	// tickEvery drives state transitions. Sub-second precision is pointless for
 	// a 25-minute lock.
 	tickEvery = time.Second
@@ -57,6 +59,8 @@ type Manager struct {
 	custom []string
 	// sessionLists is what a session covers by default, edited when calm.
 	sessionLists []string
+	// allow is the user's escape list for default-deny windows.
+	allow []string
 }
 
 // DefaultSessionLists is what a session covers before anyone changes it.
@@ -441,7 +445,15 @@ func (m *Manager) catalogLocked() blocklist.Catalog {
 // applyLocked recomputes the union and hands it to the enforcer. Never an
 // override, never a precedence chain.
 func (m *Manager) applyLocked() {
-	m.enf.Set(enforce.Union(m.catalogLocked(), m.rulesLocked()))
+	m.enf.Set(m.effectiveLocked())
+}
+
+// effectiveLocked is the union plus the user's allowlist, which is not a rule
+// source — it only carves holes in a default-deny window.
+func (m *Manager) effectiveLocked() enforce.Effective {
+	eff := enforce.Union(m.catalogLocked(), m.rulesLocked())
+	eff.Allow = append([]string(nil), m.allow...)
+	return eff
 }
 
 // Effective is what /api/state reports, computed daemon-side. The UI must never
@@ -449,7 +461,7 @@ func (m *Manager) applyLocked() {
 func (m *Manager) Effective() enforce.Effective {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return enforce.Union(m.catalogLocked(), m.rulesLocked())
+	return m.effectiveLocked()
 }
 
 // Bank returns the balance and any open recreation window.
@@ -585,6 +597,86 @@ func (m *Manager) CancelBaselineDisable(id string) error {
 	defer m.mu.Unlock()
 	m.baseline.CancelDisable(id)
 	m.event("baseline_disable_cancelled", fmt.Sprintf(`{"id":%q}`, id))
+	return m.persistLocked()
+}
+
+// Allow returns the user's escape list for default-deny windows.
+func (m *Manager) Allow() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.allow...)
+}
+
+// AddAllow widens the escape list, and is refused while a default-deny window is
+// live.
+//
+// This is the mirror of the custom blocklist's rule, and the direction is
+// reversed for the same reason: under default-deny, ADDING to the allowlist is
+// what weakens enforcement. Without the guard, "block everything" is one
+// text-box entry away from "block everything except the site I want".
+//
+// Editing it while nothing is inverted is free — it enforces nothing then.
+func (m *Manager) AddAllow(raws []string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.effectiveLocked().DefaultDeny {
+		return nil, ErrWouldWeaken
+	}
+
+	have := map[string]bool{}
+	for _, d := range m.allow {
+		have[d] = true
+	}
+	var added []string
+	for _, raw := range raws {
+		d, err := blocklist.NormalizeAllowDomain(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", strings.TrimSpace(raw), err)
+		}
+		if have[d] {
+			continue
+		}
+		have[d] = true
+		added = append(added, d)
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	if len(m.allow)+len(added) > blocklist.MaxCustomDomains {
+		return nil, blocklist.ErrTooManyCustom
+	}
+
+	m.allow = append(m.allow, added...)
+	sort.Strings(m.allow)
+	m.event("allow_added", fmt.Sprintf(`{"count":%d}`, len(added)))
+	m.applyLocked()
+	return added, m.persistLocked()
+}
+
+// RemoveAllow narrows the escape list. Strengthening, so it is always allowed —
+// including mid-window, where it takes effect immediately.
+func (m *Manager) RemoveAllow(raw string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	d, err := blocklist.NormalizeAllowDomain(raw)
+	if err != nil {
+		return err
+	}
+	kept := m.allow[:0:0]
+	for _, existing := range m.allow {
+		if existing != d {
+			kept = append(kept, existing)
+		}
+	}
+	if len(kept) == len(m.allow) {
+		return nil
+	}
+	m.allow = kept
+	m.event("allow_removed", fmt.Sprintf(`{"domain":%q}`, d))
+	m.applyLocked()
 	return m.persistLocked()
 }
 
@@ -736,7 +828,14 @@ func (m *Manager) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return m.st.Put(sessionListsKey, string(sl))
+	if err := m.st.Put(sessionListsKey, string(sl)); err != nil {
+		return err
+	}
+	al, err := json.Marshal(m.allow)
+	if err != nil {
+		return err
+	}
+	return m.st.Put(allowKey, string(al))
 }
 
 // loadExtrasLocked restores the bank and schedules. A tampered row is refused
@@ -767,6 +866,20 @@ func (m *Manager) loadExtrasLocked() {
 	} else if err == store.ErrTampered {
 		m.event("custom_signature_invalid", "{}")
 		log.Printf("custom domain row failed its signature; the list is empty until you re-add them")
+	}
+
+	// A tampered allow row empties the list, which is the SAFE direction for a
+	// blocker and the harsh one for the user: a default-deny window with no
+	// allowlist refuses everything but the permanent list. The event is what
+	// makes that visible rather than baffling.
+	if raw, err := m.st.Get(allowKey); err == nil {
+		var domains []string
+		if json.Unmarshal([]byte(raw), &domains) == nil {
+			m.allow = domains
+		}
+	} else if err == store.ErrTampered {
+		m.event("allow_signature_invalid", "{}")
+		log.Printf("allowlist row failed its signature; it is empty until you re-add it")
 	}
 
 	// A tampered row keeps the defaults, which is the safe direction: a session
