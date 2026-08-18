@@ -15,20 +15,28 @@
 
 ## THE HONEST STATE OF IT
 
+> **Written before the work; kept as written.** Every problem below has since been fixed except the
+> ones needing a machine or a certificate — see the box and the "what is left" table underneath. It
+> stays in the present tense because a roadmap that quietly rewrites its own premise once the work is
+> done is a roadmap you cannot check.
+
 Eight phases are built. Two are `[~]`. That undersells the gap, because "built" and "shipped" are
 different words and this project has only done the first one. Specifically:
 
 * **Nobody who is not the author has ever run this.** There is no release, no CI, and the installer
   has been *built* but never *executed* — the service-registration and teardown paths inside
   `project.nsi` are unexercised code that runs elevated on a stranger's machine.
+  *(CI now exists. The installer run does not — item 8, and still the most valuable thing left.)*
 * **Four features in the spec do not exist in the code.** Hard Pomodoro, spending the time bank from
   the UI, creating or editing a schedule, and choosing what a session covers. Three of them have
   daemon support already and are missing only a surface; one (Pomodoro) has a `Mode` constant, two
   struct fields, and no implementation at all — `POST /api/session` accepts `mode: "pomodoro"` today
-  and silently runs a commitment session.
+  and silently runs a commitment session. *(All four built.)*
 * **Seven defects were found by reading the code end to end.** They are listed first because a
   roadmap that adds features on top of a daemon that logs a repair event every three seconds is a
-  roadmap written by someone who did not read the daemon.
+  roadmap written by someone who did not read the daemon. *(All seven fixed, each with a test that
+  fails without its fix. Two more surfaced while fixing them: `Snapshot` transitioned and credited
+  the time bank without persisting, and the `/api/rules` CORS header was `*`.)*
 
 **Marked honestly throughout:** items tagged `[read]` were found by reading the source and are
 reasoned from the code, not observed on a running machine. Items tagged `[measured]` come from the
@@ -45,17 +53,55 @@ this pass — the fixes need a run to confirm, and the plan says so rather than 
 
 ```text
 ╔══════════════════════════════════════════════════════════════════════╗
-║  FLOW V2 — FROM BUILT TO SHIPPED                          0/7 DONE   ║
-║  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░                                        ║
-║  V0: Correctness debts — seven defects, all cheap        [    ]      ║
-║  V1: Ship it — run the installer, sign it, CI, release   [    ]      ║
-║  V2: Close the enforcement gaps — DoH, Firefox, warm tabs[    ]      ║
-║  V3: Finish the spec'd product — the four missing screens[    ]      ║
-║  V4: Durability — the event log grows without bound      [    ]      ║
-║  V5: Trust — a11y, focus traps, UI tests, rules leak     [    ]      ║
+║  FLOW V2 — FROM BUILT TO SHIPPED                       4.5/7 DONE    ║
+║  ██████████████████░░░░░░░░░░   everything but the machine work      ║
+║  V0: Correctness debts — seven defects, all cheap        [DONE]      ║
+║  V1: Ship it — CI + autostart done; installer/signing    [~   ]      ║
+║  V2: Close the enforcement gaps — DoH+Firefox were done  [~   ]      ║
+║  V3: Finish the spec'd product — all four built          [DONE]      ║
+║  V4: Durability — retention, health cost, write churn    [DONE]      ║
+║  V5: Trust — rules leak, a11y, UI tests, integration     [DONE]      ║
 ║  V6: Platform — macOS/Linux, Wails v3, the tray          [    ]      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
+
+## WHAT IS LEFT, AND WHY
+
+Everything still open needs **a machine, a credit card, or an alpha framework** — not
+an editor. That is the whole remainder:
+
+| # | Item | Blocked on |
+|---|---|---|
+| 8 | Run the installer on a clean VM | A Windows VM. Half a day of clicking. **Most valuable thing left.** |
+| 10 | Authenticode signing | Buying a certificate. `sign.ps1` and the NSIS hooks already exist. |
+| 11 | Publish a release | Wants 8 done first. |
+| 14 | Verify Firefox and Edge | The browsers, loaded and driven by hand. |
+| 15 | Verify reboot survival | A real power cycle. `reboot-test.ps1` is the harness. |
+| 30 | macOS / Linux enforcers | ~2 weeks each, and nobody has asked. |
+| 31 | Wails v3 tray | v3 is alpha. Mini mode covers the need. |
+
+**Item 8 is the one to do next.** `project.nsi` runs `flowd install` unconditionally while
+`flowd install` errors if the service already exists, so the **upgrade path is the likely
+break** — `install.ps1` runs `uninstall` first and `project.nsi` does not.
+
+## DECISIONS TAKEN WHILE BUILDING, NOT INHERITED
+
+Three items were changed or dropped on contact with the code. Each is recorded where it
+lives, and each is a one-line revert if the call was wrong.
+
+* **A bank spend keeps baseline enforced** (item 2). The looser reading — you earned it,
+  you get everything — loses to `claude.md`'s "baseline is not off".
+* **No commit rate limit** (item 24). Writing it produced a comment arguing against it:
+  aborting and immediately reconsidering is the grace window working. The dirty-row check
+  got the win the limit was for.
+* **No remote time source** (item 29). Monotonic already closes threat model row 6. A time
+  client would add a network dependency and a fail-open path for no gain.
+
+And one built rather than dodged: **default-deny** (item 21). The cheap alternative was to
+rename `preset.bedtime` and delete `preset.offline`. It was built instead, because a preset
+that lies about its scope is worse than one that does not exist — with the permanent
+allowlist checked first, DoH refused before the user allowlist, a mandatory escape list, and
+sink-only enforcement.
 
 ---
 
@@ -66,41 +112,41 @@ there is ever a question about what to pick up next, it is the lowest-numbered u
 
 | # | Item | Phase | Cost | Why it is here |
 |---|---|---|---|---|
-| 1 | DNS sink never stops when the rule set empties | V0 | ~10 lines | Logs a false repair every 3s, forever |
-| 2 | Bank spend unblocks adult and gambling too | V0 | ~6 lines | A protective baseline is not recreation |
-| 3 | Timezone tamper event is dead on Windows | V0 | ~15 lines | The detection for the attack it was written for never fires |
-| 4 | Extension hardcodes port 8787; daemon may not use it | V0 | ~20 lines | Silent total loss of extension enforcement |
-| 5 | `GET /api/events` is unbounded and polled every 5s | V0 | ~25 lines | The whole log, HMAC-verified, every five seconds |
-| 6 | `mode: "pomodoro"` is accepted and ignored | V0 | ~5 lines | The API lies about what it did |
-| 7 | Cascaded transitions log only the final state | V0 | ~8 lines | The tamper log loses the middle of a reboot recovery |
+| ~~1~~ | ~~DNS sink never stops when the rule set empties~~ ✅ | V0 | ~10 lines | Logs a false repair every 3s, forever |
+| ~~2~~ | ~~Bank spend unblocks adult and gambling too~~ ✅ | V0 | ~6 lines | A protective baseline is not recreation |
+| ~~3~~ | ~~Timezone tamper event is dead on Windows~~ ✅ | V0 | ~15 lines | The detection for the attack it was written for never fires |
+| ~~4~~ | ~~Extension hardcodes port 8787; daemon may not use it~~ ✅ | V0 | ~20 lines | Silent total loss of extension enforcement |
+| ~~5~~ | ~~`GET /api/events` is unbounded and polled every 5s~~ ✅ | V0 | ~25 lines | The whole log, HMAC-verified, every five seconds |
+| ~~6~~ | ~~`mode: "pomodoro"` is accepted and ignored~~ ✅ | V0 | ~5 lines | The API lies about what it did |
+| ~~7~~ | ~~Cascaded transitions log only the final state~~ ✅ | V0 | ~8 lines | The tamper log loses the middle of a reboot recovery |
 | 8 | Run the installer on a clean machine | V1 | half a day | Unexercised elevated code |
-| 9 | CI: the check line on every push | V1 | ~60 lines YAML | Nothing but a human runs the tests |
+| ~~9~~ | ~~CI: the check line on every push~~ ✅ | V1 | ~60 lines YAML | Nothing but a human runs the tests |
 | 10 | Authenticode signing, or an honest substitute | V1 | cost/blocked | Every user gets a SmartScreen warning |
 | 11 | Publish a release with both architectures | V1 | ~1 hour | "Build it yourself" is not a distribution |
-| 12 | Window autostart (the daemon already autostarts) | V1 | ~30 lines | The timer you cannot see is a timer you forget |
+| ~~12~~ | ~~Window autostart (the daemon already autostarts)~~ ✅ | V1 | ~30 lines | The timer you cannot see is a timer you forget |
 | ~~13~~ | ~~NXDOMAIN the DoH bootstrap hostnames~~ | V2 | — | **Already done on `main`** — see note below |
 | 14 | Verify Firefox and Edge | V2 | ~2 hours | Ported but never loaded and driven |
 | 15 | Verify reboot survival on real hardware | V2 | ~1 hour | Harness exists; needs a machine |
 | ~~16~~ | ~~Port the extension to Firefox and Edge~~ | V2 | — | **Already done on `main`** — `browser.js` |
-| 17 | Hard Pomodoro | V3 | ~2 days | A mode in the spec with no implementation |
-| 18 | Spend the bank from the UI | V3 | ~half a day | Earnable, not spendable |
-| 19 | Create and edit schedules | V3 | ~1 day | Only the two seeded rows can be toggled |
-| 20 | Session composition sub-screen | V3 | ~1 day | `SESSION_LISTS` is a hardcoded const |
-| 21 | Default-deny for `bedtime` and `offline` | V3 | ~1 day | They claim "everything" and mean "eleven lists" |
-| 22 | Event log retention and pruning | V4 | ~half a day | `state.db` grows forever |
-| 23 | Health's `Verify()` cost scales with history | V4 | ~2 hours | O(n) HMAC on a route meant to be cheap |
-| 24 | Rate-limit ARMING/abort churn | V4 | ~2 hours | Every tap is a signed write |
-| 25 | `/api/rules` leaks the blocklist to any web page | V5 | ~20 lines | A site can fingerprint what you block |
-| 26 | Modals: focus trap, Escape, `role="dialog"` | V5 | ~half a day | Two dialogs, neither reachable by keyboard alone |
-| 27 | Component tests for the UI | V5 | ~1 day | Only `lib/state.ts` is tested |
-| 28 | An end-to-end daemon test | V5 | ~1 day | Every layer is tested; the stack is not |
-| 29 | Signed remote time source | V5 | ~half a day | `Anchor.ServerStart` is always nil |
+| ~~17~~ | ~~Hard Pomodoro~~ ✅ | V3 | ~2 days | A mode in the spec with no implementation |
+| ~~18~~ | ~~Spend the bank from the UI~~ ✅ | V3 | ~half a day | Earnable, not spendable |
+| ~~19~~ | ~~Create and edit schedules~~ ✅ | V3 | ~1 day | Only the two seeded rows can be toggled |
+| ~~20~~ | ~~Session composition sub-screen~~ ✅ | V3 | ~1 day | `SESSION_LISTS` is a hardcoded const |
+| ~~21~~ | ~~Default-deny for `bedtime` and `offline`~~ ✅ | V3 | ~1 day | They claim "everything" and mean "eleven lists" |
+| ~~22~~ | ~~Event log retention and pruning~~ ✅ | V4 | ~half a day | `state.db` grows forever |
+| ~~23~~ | ~~Health's `Verify()` cost scales with history~~ ✅ | V4 | ~2 hours | O(n) HMAC on a route meant to be cheap |
+| ~~24~~ | ~~Rate-limit ARMING/abort churn~~ — dirty-row check only; limit rejected | V4 | ~2 hours | Every tap is a signed write |
+| ~~25~~ | ~~`/api/rules` leaks the blocklist to any web page~~ ✅ | V5 | ~20 lines | A site can fingerprint what you block |
+| ~~26~~ | ~~Modals: focus trap, Escape, `role="dialog"`~~ ✅ | V5 | ~half a day | Two dialogs, neither reachable by keyboard alone |
+| ~~27~~ | ~~Component tests for the UI~~ ✅ | V5 | ~1 day | Only `lib/state.ts` is tested |
+| ~~28~~ | ~~An end-to-end daemon test~~ ✅ | V5 | ~1 day | Every layer is tested; the stack is not |
+| ~~29~~ | ~~Signed remote time source~~ — decided against, see below | V5 | ~half a day | `Anchor.ServerStart` is always nil |
 | 30 | macOS and Linux enforcers | V6 | ~2 weeks | Interface stubs today |
 | 31 | Wails v3: real tray, real multi-window | V6 | blocked | v3 is alpha |
 
 ---
 
-# PHASE V0 — CORRECTNESS DEBTS
+# PHASE V0 — CORRECTNESS DEBTS ✅ DONE
 
 **Why first:** every one of these is under thirty lines, and four of them are wrong in the direction
 that matters — they either weaken enforcement or fill the log that proves enforcement is working.
@@ -557,7 +603,7 @@ What remains is item 14: loading it in Firefox and Edge and driving it.
 
 ---
 
-# PHASE V3 — FINISH THE SPEC'D PRODUCT
+# PHASE V3 — FINISH THE SPEC'D PRODUCT ✅ DONE
 
 **Why fourth:** these are features `claude.md` specifies, that the daemon mostly already supports,
 and that a user cannot reach. They rank below V2 because a missing feature is visible and a silent
@@ -712,7 +758,7 @@ than one that does not exist. Make that call before building.
 
 ---
 
-# PHASE V4 — DURABILITY
+# PHASE V4 — DURABILITY ✅ DONE
 
 **Why fifth:** nothing here is wrong today. All of it is wrong in six months of daily use, which is
 the timescale a commitment device is supposed to operate on.
@@ -768,7 +814,7 @@ event.
 
 ---
 
-# PHASE V5 — TRUST AND POLISH
+# PHASE V5 — TRUST AND POLISH ✅ DONE
 
 **Exit:** the app is keyboard-navigable, the UI has tests, the stack has one end-to-end test, and no
 route leaks more than it must.
