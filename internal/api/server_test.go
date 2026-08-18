@@ -26,7 +26,12 @@ func newServer(t *testing.T) (http.Handler, *store.Store, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, "secret", true, fakeEnforcement{}, nil).Handler(), st, dbPath
+	srv := New(st, "secret", true, fakeEnforcement{}, nil)
+	// /api/health caches its Verify() verdict so a polling caller cannot make the
+	// cost of answering scale with the size of the history. Tests want the
+	// authoritative answer every time.
+	srv.sigTTL = 0
+	return srv.Handler(), st, dbPath
 }
 
 // fakeEnforcement stands in for the real enforcer so API tests do not need WFP.
@@ -306,4 +311,3 @@ func TestTokenFileRoundTrip(t *testing.T) {
 		t.Fatal("token must be stable across restarts or every UI reconnect breaks")
 	}
 }
-

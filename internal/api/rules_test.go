@@ -118,3 +118,43 @@ func TestPathExceptionsDoNotLeakAcrossLists(t *testing.T) {
 		t.Fatalf("an outright block must beat a path exception, got %v", both)
 	}
 }
+
+// "*" meant any web page you visited could fetch this and READ it — not merely
+// probe for it — learning that you run Flow and whether you block adult content
+// or gambling. Not an authority leak; a privacy one, in about the most
+// sensitive categories there are.
+func TestRulesIsNotReadableByArbitraryWebPages(t *testing.T) {
+	h, _ := sessionServer(t)
+
+	req := httptest.NewRequest("GET", "/api/rules", nil)
+	req.Header.Set("Origin", "https://some-random-site.example")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("a web page origin got CORS %q — the browser would hand it the body", got)
+	}
+
+	// The extension still works, which is the entire reason this route is open.
+	for _, origin := range []string{
+		"chrome-extension://abcdefghijklmnop",
+		"moz-extension://12345678-1234-1234-1234-123456789abc",
+	} {
+		req := httptest.NewRequest("GET", "/api/rules", nil)
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Errorf("extension origin %q got CORS %q", origin, got)
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("extension origin %q got status %d", origin, rec.Code)
+		}
+	}
+
+	// And a request with no Origin at all — curl, flowctl — is unaffected.
+	if _, code := getRules(t, h, ""); code != http.StatusOK {
+		t.Fatalf("originless request returned %d", code)
+	}
+}

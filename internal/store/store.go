@@ -142,6 +142,50 @@ func (s *Store) Events(since int64, limit int) ([]Event, error) {
 	return out, rows.Err()
 }
 
+// Retention bounds the event log.
+//
+// The log is a tamper-evidence record, so pruning has to be distinguishable
+// from an attacker deleting rows: Prune writes a log_pruned event naming the
+// count and the oldest surviving id. A gap in the ids with no log_pruned row
+// before it is evidence; a gap with one is housekeeping. Without that, pruning
+// destroys the property the signing exists to provide.
+const RetentionDays = 90
+
+// RetentionFloor is the number of newest rows kept whatever their age, so a
+// quiet machine does not lose its whole history to the calendar.
+//
+// A var rather than a const so a test can lower it and exercise a real prune;
+// nothing in the daemon writes to it.
+var RetentionFloor = 10000
+
+// Prune deletes events older than RetentionDays, keeping at least
+// RetentionFloor of the newest rows. Returns how many were removed.
+func (s *Store) Prune() (int64, error) {
+	cutoff := time.Now().UTC().AddDate(0, 0, -RetentionDays).Format(time.RFC3339Nano)
+
+	// The floor is expressed as "never touch the newest N", which is why this is
+	// a subquery rather than a plain ts comparison.
+	res, err := s.db.Exec(`
+		DELETE FROM events
+		WHERE ts < ?
+		  AND id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)`,
+		cutoff, RetentionFloor)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return 0, err
+	}
+
+	var oldest int64
+	s.db.QueryRow(`SELECT COALESCE(MIN(id), 0) FROM events`).Scan(&oldest)
+	if _, err := s.Append("log_pruned", fmt.Sprintf(`{"removed":%d,"oldestId":%d}`, n, oldest)); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 // Verify walks every signed row and returns a description of each bad one.
 // This is what `flowctl verify` reports and what /api/health summarises.
 func (s *Store) Verify() ([]string, error) {

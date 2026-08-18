@@ -45,8 +45,18 @@ type Anchor struct {
 	// ServerStart, when present, is a signed remote timestamp. server_now minus
 	// this is a ceiling on credited elapsed.
 	//
-	// ponytail: nothing fetches this yet — there is no server. The ceiling logic
-	// is here so adding a time service later is a wiring change, not a redesign.
+	// ponytail: nothing fetches this, deliberately, and the decision was
+	// revisited rather than inherited. Monotonic already defeats the attack this
+	// would defend against — threat model row 6, "move the system clock
+	// forward", is closed and tested — so a time client would add a network
+	// dependency, a reachability failure mode, and a fail-open path, for no
+	// threat-model gain.
+	//
+	// The ceiling logic stays because it costs nothing and is tested
+	// (TestServerTimestampIsACeilingNotAFloor), so wiring in a time service later
+	// is a wiring change rather than a redesign. If it ever happens it must fail
+	// OPEN: no network must never mean no session, or the app stops working on a
+	// plane.
 	ServerStart *time.Time `json:"serverStart,omitempty"`
 }
 

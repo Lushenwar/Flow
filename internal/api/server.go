@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lushenwar/Flow/internal/store"
@@ -23,7 +24,24 @@ type Server struct {
 	enf     Enforcement
 	sess    Sessions
 	started time.Time
+
+	// Verify walks and re-HMACs every signed row, which is exactly what
+	// `flowctl verify` is for and exactly wrong on a route named "health".
+	// Cached so a polling caller cannot make the cost of answering scale with
+	// the size of the history.
+	sigMu  sync.Mutex
+	sigAt  time.Time
+	sigBad []string
+	sigErr error
+	// sigTTL is how stale a cached verdict may be. A field rather than a
+	// constant so tests can demand a fresh answer; nothing else changes it.
+	sigTTL time.Duration
 }
+
+// signatureTTL is how stale a cached verdict may be. Tampering is not a
+// millisecond-scale event, and flowctl verify is always available for an
+// authoritative answer.
+const signatureTTL = 2 * time.Minute
 
 // Enforcement is the slice of the enforcer health needs. An interface so the API
 // tests do not have to stand up real WFP filters.
@@ -33,7 +51,10 @@ type Enforcement interface {
 }
 
 func New(st *store.Store, token string, dev bool, enf Enforcement, sess Sessions) *Server {
-	return &Server{st: st, token: token, dev: dev, enf: enf, sess: sess, started: time.Now()}
+	return &Server{
+		st: st, token: token, dev: dev, enf: enf, sess: sess,
+		started: time.Now(), sigTTL: signatureTTL,
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -80,11 +101,38 @@ func (s *Server) Handler() http.Handler {
 	outer.Handle("/", s.devCORS(s.auth(mux)))
 	if s.sess != nil {
 		outer.HandleFunc("GET /api/rules", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			// Echo the origin only for extension origins.
+			//
+			// This was "*", which meant any web page you visited could fetch
+			// http://127.0.0.1:8787/api/rules and READ the response — not merely
+			// probe for it. That tells an arbitrary site you run Flow and whether
+			// you block adult content, gambling, or your own named list of
+			// domains. Not an authority leak; a privacy one, and the categories
+			// involved are about as sensitive as categories get.
+			//
+			// The endpoint stays unauthenticated, because the reasoning for that
+			// has not changed: an extension lives in the browser sandbox and
+			// cannot read %ProgramData%\Flow	oken. It just stops being
+			// universally readable. A page can still detect that something
+			// answers on this port; it can no longer read what.
+			if o := r.Header.Get("Origin"); isExtensionOrigin(o) {
+				w.Header().Set("Access-Control-Allow-Origin", o)
+				w.Header().Set("Vary", "Origin")
+			}
 			s.rules(w, r)
 		})
 	}
 	return outer
+}
+
+// isExtensionOrigin reports whether an Origin belongs to a browser extension.
+//
+// Chrome and Edge use chrome-extension://, Firefox moz-extension://. A page
+// cannot forge an Origin header — the browser sets it — so this is the whole
+// check rather than the start of one.
+func isExtensionOrigin(o string) bool {
+	return strings.HasPrefix(o, "chrome-extension://") ||
+		strings.HasPrefix(o, "moz-extension://")
 }
 
 // devCORS lets `npm run dev` on localhost:3000 talk to the daemon. Without it
@@ -156,7 +204,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	bad, err := s.st.Verify()
+	bad, err := s.signature()
 	switch {
 	case err != nil:
 		h.Status, h.Signature = "degraded", "unreadable: "+err.Error()
@@ -169,6 +217,19 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 // events returns the newest first, bounded. The limit is capped rather than
 // honoured blindly: the response costs an HMAC per row, and no caller has a
 // reason to ask for the whole history over HTTP.
+// signature returns the cached verify verdict, refreshing it when stale.
+func (s *Server) signature() ([]string, error) {
+	s.sigMu.Lock()
+	defer s.sigMu.Unlock()
+
+	if !s.sigAt.IsZero() && time.Since(s.sigAt) < s.sigTTL {
+		return s.sigBad, s.sigErr
+	}
+	s.sigBad, s.sigErr = s.st.Verify()
+	s.sigAt = time.Now()
+	return s.sigBad, s.sigErr
+}
+
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	var since int64
 	fmt.Sscanf(r.URL.Query().Get("since"), "%d", &since)

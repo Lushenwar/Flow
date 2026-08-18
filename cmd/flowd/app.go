@@ -75,9 +75,32 @@ func start(dev bool, port int, blockIDs []string) (*daemon, error) {
 	}
 	log.Printf("baseline: %v", blockIDs)
 
+	// Bound the event log. Once on start and daily after: it is a tamper record,
+	// so Prune writes a log_pruned row naming what it removed — a gap in the ids
+	// with no such row before it is evidence, a gap with one is housekeeping.
+	if n, err := st.Prune(); err != nil {
+		log.Printf("prune event log: %v", err)
+	} else if n > 0 {
+		log.Printf("pruned %d event(s) older than %d days", n, store.RetentionDays)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go enf.Run(ctx, reconcileEvery)
 	go mgr.Run(ctx)
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := st.Prune(); err != nil {
+					log.Printf("prune event log: %v", err)
+				}
+			}
+		}
+	}()
 
 	log.Printf("listening on http://%s (token: %s)", ln.Addr(), paths.Token())
 

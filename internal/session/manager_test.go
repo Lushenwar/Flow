@@ -570,3 +570,38 @@ func TestTamperedSessionRowStartsIdleRatherThanCrashing(t *testing.T) {
 		t.Fatalf("a valid row should restore, got %s", m2.Snapshot().State)
 	}
 }
+
+// persistLocked wrote all six rows on every call, so one dial tap cost six
+// signed writes plus an event — and ARMING/abort churn is unbounded.
+func TestUnchangedRowsAreNotRewritten(t *testing.T) {
+	dir := t.TempDir()
+	c := newFake()
+	m, _ := newManager(t, c, dir)
+
+	// One write path to establish a baseline for every row.
+	if _, err := m.Commit(Plan{Mode: ModeCommitment, Duration: 25 * time.Minute, Grace: DefaultGrace}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	schedulesBefore := m.written[schedulesKey]
+	sessionBefore := m.written[storeKey]
+	m.mu.Unlock()
+	if schedulesBefore == "" || sessionBefore == "" {
+		t.Fatal("setup: the first persist should have written every row")
+	}
+
+	// Abort changes the session row and touches nothing else.
+	if _, err := m.Abort(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.written[schedulesKey] != schedulesBefore {
+		t.Fatal("an untouched row was rewritten")
+	}
+	if m.written[storeKey] == sessionBefore {
+		t.Fatal("the row that did change was not written")
+	}
+}

@@ -51,6 +51,11 @@ jobs:
       - name: go vet
         run: go vet . ./cmd/... ./internal/...
 
+      # Binds a real port and waits out a real 15-second grace window, so it is
+      # tagged out of the default run and asked for explicitly here.
+      - name: integration tests
+        run: go test -tags integration ./internal/integration/ -timeout 5m
+
       - name: extension tests
         working-directory: extension
         run: npm test
