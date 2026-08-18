@@ -17,6 +17,7 @@ A pre-commit hook (`.git/hooks/pre-commit`) enforces this locally by rejecting c
 ╔══════════════════════════════════════════════════════════╗
 ║  FLOW BUILD PROGRESS                      7/8 DONE ║
 ║  ██████████████████████████░░  ALL PHASES BUILT, 1 & 7 [~]║
+║  See claudev2.md for the road from built to shipped.     ║
 ║  Phase 0: Daemon, Service Install, Signed Store  [DONE]  ║
 ║  Phase 1: Enforcement Core & Reconciliation      [~   ]  ║
 ║  Phase 2: Session State Machine & Time Authority [DONE]  ║
@@ -177,6 +178,17 @@ is a purchase rather than a coding task. It deliberately does not self-sign — 
 still trips SmartScreen and still reads "Unknown Publisher" while looking signed to anyone checking a
 checkbox, which is worse than honestly unsigned. `install.ps1` reports the real signature status and
 writes SHA256 checksums.
+**Since then — see `claudev2.md` for the full ledger.** Seven defects found by reading the source
+were fixed (the DNS sink logging a false repair every 3s forever; a bank spend unblocking baseline;
+the TZ tamper check comparing `"Local"` to `"Local"`; the extension losing the daemon when 8787 was
+taken; `/api/events` unbounded; `mode: "pomodoro"` accepted and ignored; cascaded ticks logging only
+their landing state). Hard Pomodoro, bank spending, schedule editing and session composition are
+built. Bedtime and Offline are genuine default-deny with a mandatory user allowlist. CI runs the
+check line on Windows. `/api/rules` no longer answers `Access-Control-Allow-Origin: *`.
+
+What remains needs a machine or a certificate: running the installer on a clean VM, signing it,
+publishing a release, and driving Firefox and Edge by hand.
+
 Update this as you finish each step.
 
 **Checks:** `go test . ./cmd/... ./internal/... && go vet . ./cmd/... ./internal/... && (cd extension && npm test) && cd ui && npm test && npm run typecheck && npm run lint && npm run build`
