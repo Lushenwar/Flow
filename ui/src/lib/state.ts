@@ -54,12 +54,39 @@ export interface ScheduleRow {
   tz: string;
   enabled: boolean;
   active: boolean;
+  /** 0 = Sunday. Empty means every day. */
+  days?: number[];
+}
+
+export const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
+
+/** "every day", or the days it may start on. A window that crosses midnight
+ *  belongs to the day it STARTED on, which is why this never says "and Sunday
+ *  morning". */
+export function dayLabel(days?: number[]): string {
+  if (!days || days.length === 0 || days.length === 7) return "every day";
+  const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return days
+    .slice()
+    .sort((a, b) => a - b)
+    .map((d) => names[d] ?? "?")
+    .join(", ");
 }
 
 export interface BankView {
   balanceSeconds: number;
   spending: boolean;
   remainingSeconds: number;
+}
+
+/** The escape list for default-deny modes. `locked` mirrors whether one is in
+ *  force — the daemon decides it, the UI reports it. */
+export interface AllowList {
+  id: string;
+  name: string;
+  domains: string[];
+  locked: boolean;
+  max: number;
 }
 
 export interface CustomList {
@@ -143,6 +170,13 @@ export function eventLabel(kind: string): string | null {
     custom_added: "Sites added to your list",
     custom_removed: "Site removed from your list",
     custom_signature_invalid: "Saved custom sites failed their signature check",
+    allow_added: "Sites added to the always-reachable list",
+    allow_removed: "Site removed from the always-reachable list",
+    allow_signature_invalid: "Saved always-reachable sites failed their signature check",
+    session_lists_changed: "Changed what a session blocks",
+    schedule_saved: "Schedule saved",
+    schedule_deleted: "Schedule deleted",
+    schedule_timezone_changed: "Timezone changed under an active schedule",
   };
   // Unknown kinds are dropped rather than shown raw: service_start on every
   // launch is noise, not history.

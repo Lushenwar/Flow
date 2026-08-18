@@ -35,8 +35,10 @@ type DNSSink struct {
 	// them to one layer makes that pairing impossible to get wrong.
 	Pin Pinner
 
-	mu      sync.RWMutex
-	blocked []string
+	mu          sync.RWMutex
+	blocked     []string
+	defaultDeny bool
+	allow       []string
 	conn    *net.UDPConn
 	pinned  bool
 	wg      sync.WaitGroup
@@ -80,6 +82,8 @@ func (d *DNSSink) Apply(eff Effective) error {
 
 	d.mu.Lock()
 	d.blocked = want
+	d.defaultDeny = eff.DefaultDeny
+	d.allow = append([]string(nil), eff.Allow...)
 	running, pinned := d.conn != nil, d.pinned
 	d.mu.Unlock()
 
@@ -93,7 +97,7 @@ func (d *DNSSink) Apply(eff Effective) error {
 	//
 	// Stop() unpins the resolver from its on-disk backup before closing the
 	// socket, so this never strands an adapter on a sink that is gone.
-	if len(want) == 0 {
+	if len(want) == 0 && !eff.DefaultDeny {
 		if running {
 			return d.Stop()
 		}
@@ -112,7 +116,9 @@ func (d *DNSSink) Apply(eff Effective) error {
 func (d *DNSSink) Drifted(eff Effective) (bool, error) {
 	d.mu.RLock()
 	running, pinned := d.conn != nil, d.pinned
-	sameSet := slices.Equal(d.blocked, eff.SortedDomains())
+	sameSet := slices.Equal(d.blocked, eff.SortedDomains()) &&
+		d.defaultDeny == eff.DefaultDeny &&
+		slices.Equal(d.allow, eff.Allow)
 	d.mu.RUnlock()
 
 	if eff.Empty() {
@@ -228,13 +234,27 @@ func (d *DNSSink) Blocked(name string) bool {
 	defer d.mu.RUnlock()
 
 	// Nothing enforced means no reason to interfere with anyone's resolver.
-	if len(d.blocked) == 0 {
+	if len(d.blocked) == 0 && !d.defaultDeny {
 		return false
 	}
 	// Refusing the DoH canary and the major endpoints keeps browsers on system
 	// DNS, which is this sink. Without it a browser resolves around every rule
 	// below and the whole layer is decorative.
 	if blockedForDoH(name) {
+		return true
+	}
+	// The user's own allowlist. Checked before the inversion and after the
+	// permanent one, so it can carve holes in a default-deny window but can
+	// never put a crisis line back on the blocked side.
+	for _, a := range d.allow {
+		if name == a || strings.HasSuffix(name, "."+a) {
+			return false
+		}
+	}
+	// Everything not allowed, rather than everything named. This is the only
+	// place in the app that refuses a name it was never told about, which is
+	// why the two allowlists above are checked first and unconditionally.
+	if d.defaultDeny {
 		return true
 	}
 	for _, b := range d.blocked {

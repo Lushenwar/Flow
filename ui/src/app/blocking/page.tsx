@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AllowList } from "@/components/AllowList";
 import { AutostartRow } from "@/components/AutostartRow";
+import { BankRow } from "@/components/BankRow";
 import { BaselineRowView, SessionOwnedRow } from "@/components/BaselineRow";
 import { CustomSites } from "@/components/CustomSites";
 import { History } from "@/components/History";
+import { ScheduleEditor } from "@/components/ScheduleEditor";
+import { SessionLists } from "@/components/SessionLists";
 import { ScheduleRowView } from "@/components/ScheduleRow";
 import { ApiError, api } from "@/lib/flow-client";
 import {
-  bankLabel,
   sessionOwnedIds,
   type BankView,
   type ScheduleRow,
@@ -22,6 +25,8 @@ export default function BlockingScreen() {
   const [refused, setRefused] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [bank, setBank] = useState<BankView | null>(null);
+  // "new" opens a blank form; an id opens that row for editing.
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     const load = () => {
@@ -121,37 +126,77 @@ export default function BlockingScreen() {
         </p>
       )}
 
+      {/* Session composition, edited when calm. The daemon refuses the edit
+          mid-session; this only reports it. */}
+      <SessionLists
+        locked={state.session.state !== "IDLE" && state.session.state !== "COMPLETE"}
+      />
+
       {/* Adding a site changes the baseline rows too — the list arrives as a
           rule with its own switch — so a change here has to refresh the poll. */}
       <CustomSites onChanged={refresh} />
 
-      {schedules.length > 0 && (
-        <div className="mt-5 pt-3" style={{ borderTop: "0.5px solid var(--hairline)" }}>
-          <p className="text-[12px] mb-1" style={{ color: "var(--text-secondary)" }}>
-            Schedules
-          </p>
-          {schedules.map((s, i) => (
-            <ScheduleRowView
-              key={s.id}
-              row={s}
-              last={i === schedules.length - 1}
-              busy={busy === s.id}
-              onToggle={(enabled) =>
-                run(s.id, async () => {
-                  await api.putSchedule({ ...s, enabled });
-                  setSchedules(await api.schedules());
-                })
-              }
-            />
-          ))}
-        </div>
-      )}
+      <AllowList onChanged={refresh} />
 
-      {bank && (
-        <p className="text-[11px] mt-4" style={{ color: "var(--text-muted)" }}>
-          {bankLabel(bank)}
+      <div className="mt-5 pt-3" style={{ borderTop: "0.5px solid var(--hairline)" }}>
+        <p className="text-[12px] mb-1" style={{ color: "var(--text-secondary)" }}>
+          Schedules
         </p>
-      )}
+        {schedules.map((s, i) => (
+          <ScheduleRowView
+            key={s.id}
+            row={s}
+            last={i === schedules.length - 1 && !editing}
+            busy={busy === s.id}
+            onToggle={(enabled) =>
+              run(s.id, async () => {
+                await api.putSchedule({ ...s, enabled });
+                setSchedules(await api.schedules());
+              })
+            }
+            onEdit={() => setEditing(s.id)}
+            onDelete={() =>
+              run(s.id, async () => {
+                await api.deleteSchedule(s.id);
+                setSchedules(await api.schedules());
+              })
+            }
+          />
+        ))}
+
+        {editing ? (
+          <ScheduleEditor
+            existing={schedules.find((s) => s.id === editing)}
+            onCancel={() => setEditing(null)}
+            onDone={async () => {
+              setEditing(null);
+              setSchedules(await api.schedules());
+              refresh();
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditing("new")}
+            className="text-[11px] mt-2 underline underline-offset-2"
+            style={{ color: "var(--text-muted)" }}
+          >
+            add a schedule
+          </button>
+        )}
+      </div>
+
+      {/* idle comes from the daemon's state, never from a local guess: a spend
+          is refused outside IDLE and the UI only reports that, it does not
+          decide it. */}
+      <BankRow
+        bank={bank}
+        idle={state.session.state === "IDLE" || state.session.state === "COMPLETE"}
+        onSpent={() => {
+          api.bank().then(setBank).catch(() => {});
+          refresh();
+        }}
+      />
 
       {/* Renders nothing in a browser: there is no window to open at login. */}
       <AutostartRow />

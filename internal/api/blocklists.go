@@ -114,3 +114,79 @@ func (s *Server) customRemove(w http.ResponseWriter, r *http.Request) {
 func detailBody(code, detail string) map[string]string {
 	return map[string]string{"error": code, "detail": detail}
 }
+
+// The user's allowlist, which only bites during a default-deny window.
+//
+// Direction is REVERSED from the blocklist and for the same reason: under
+// default-deny, adding to the allowlist is what weakens enforcement. So adding
+// is refused while a window is live and removing is always free — the exact
+// mirror of custom.blocked, where adding is free and removing is refused.
+
+type allowView struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Domains []string `json:"domains"`
+	// Locked mirrors whether a default-deny rule is enforced right now, so the
+	// UI can say why an addition was refused without deriving it.
+	Locked bool `json:"locked"`
+	Max    int  `json:"max"`
+}
+
+func (s *Server) allowList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.allowView())
+}
+
+func (s *Server) allowView() allowView {
+	domains := s.sess.Allow()
+	if domains == nil {
+		domains = []string{}
+	}
+	return allowView{
+		ID:      blocklist.AllowListID,
+		Name:    "Always reachable",
+		Domains: domains,
+		Locked:  s.sess.Effective().DefaultDeny,
+		Max:     blocklist.MaxCustomDomains,
+	}
+}
+
+func (s *Server) allowAdd(w http.ResponseWriter, r *http.Request) {
+	var req addRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("bad_request"))
+		return
+	}
+	if len(req.Domains) == 0 {
+		writeJSON(w, http.StatusBadRequest, errBody("no_domains"))
+		return
+	}
+
+	added, err := s.sess.AddAllow(req.Domains)
+	switch {
+	case errors.Is(err, session.ErrWouldWeaken):
+		writeJSON(w, http.StatusConflict, errBody("would_weaken"))
+	case errors.Is(err, blocklist.ErrNotADomain):
+		writeJSON(w, http.StatusBadRequest, detailBody("not_a_domain", err.Error()))
+	case errors.Is(err, blocklist.ErrTooManyCustom):
+		writeJSON(w, http.StatusBadRequest, errBody("too_many_domains"))
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
+	default:
+		if added == nil {
+			added = []string{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"added": added, "list": s.allowView()})
+	}
+}
+
+func (s *Server) allowRemove(w http.ResponseWriter, r *http.Request) {
+	err := s.sess.RemoveAllow(strings.TrimSpace(r.PathValue("domain")))
+	switch {
+	case errors.Is(err, blocklist.ErrNotADomain):
+		writeJSON(w, http.StatusBadRequest, errBody("not_a_domain"))
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
+	default:
+		writeJSON(w, http.StatusOK, s.allowView())
+	}
+}

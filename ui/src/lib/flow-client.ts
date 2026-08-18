@@ -1,4 +1,5 @@
 import type {
+  AllowList,
   AppState,
   BankView,
   BaselineRow,
@@ -107,11 +108,25 @@ export const api = {
       body: JSON.stringify({ minutes }),
     }),
 
+  /** What a session covers. Editing is a 409 while one is running — chosen
+   *  when calm, which is the whole reason it is not on the dial. */
+  sessionLists: () => call<{ listIds: string[] }>("/api/session/lists"),
+  putSessionLists: (listIds: string[]) =>
+    call<{ listIds: string[] }>("/api/session/lists", {
+      method: "PUT",
+      body: JSON.stringify({ listIds }),
+    }),
+
   schedules: () => call<ScheduleRow[]>("/api/schedules"),
-  putSchedule: (s: Partial<ScheduleRow>) =>
+  /** Refused with 409 would_weaken while the schedule's own window is live. */
+  putSchedule: (s: Partial<ScheduleRow> & { days?: number[] }) =>
     call<ScheduleRow[]>("/api/schedules", {
       method: "POST",
       body: JSON.stringify(s),
+    }),
+  deleteSchedule: (id: string) =>
+    call<ScheduleRow[]>(`/api/schedules/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
 
   /** The user's own list. Adding strengthens and always works; removing is
@@ -124,6 +139,20 @@ export const api = {
     }),
   removeBlocked: (domain: string) =>
     call<CustomList>(`/api/blocklists/${encodeURIComponent(domain)}`, {
+      method: "DELETE",
+    }),
+
+  /** The escape list for block-everything modes. Direction is the mirror of the
+   *  blocklist: adding is refused while a default-deny window is live, removing
+   *  is always free. */
+  allowlist: () => call<AllowList>("/api/allowlist"),
+  addAllowed: (domains: string[]) =>
+    call<{ added: string[]; list: AllowList }>("/api/allowlist", {
+      method: "POST",
+      body: JSON.stringify({ domains }),
+    }),
+  removeAllowed: (domain: string) =>
+    call<AllowList>(`/api/allowlist/${encodeURIComponent(domain)}`, {
       method: "DELETE",
     }),
 

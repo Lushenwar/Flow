@@ -26,6 +26,10 @@ const (
 	schedulesKey = "schedules"
 	// customKey holds the signed list of user-added domains.
 	customKey = "custom"
+	// sessionListsKey holds what a session covers by default.
+	sessionListsKey = "sessionLists"
+	// allowKey holds the user's allowlist for default-deny windows.
+	allowKey = "allow"
 	// tickEvery drives state transitions. Sub-second precision is pointless for
 	// a 25-minute lock.
 	tickEvery = time.Second
@@ -53,15 +57,55 @@ type Manager struct {
 	// it reaches the union as one list carried by a baseline rule, so it inherits
 	// the same attribution and the same 15-minute disable delay as a preset.
 	custom []string
+	// sessionLists is what a session covers by default, edited when calm.
+	sessionLists []string
+	// allow is the user's escape list for default-deny windows.
+	allow []string
 }
+
+// DefaultSessionLists is what a session covers before anyone changes it.
+var DefaultSessionLists = []string{"preset.video", "preset.doomscroll", "preset.gaming"}
 
 func NewManager(st *store.Store, c Clock, enf Enforcement, cat blocklist.Catalog, baseline []string) *Manager {
 	return &Manager{
 		st: st, clock: c, enf: enf, cat: cat,
-		sess:      New(),
-		baseline:  NewBaseline(baseline),
-		schedules: schedule.Defaults(time.Local),
+		sess:         New(),
+		baseline:     NewBaseline(baseline),
+		schedules:    schedule.Defaults(time.Local),
+		sessionLists: append([]string(nil), DefaultSessionLists...),
 	}
+}
+
+// SessionLists is what a session covers by default.
+func (m *Manager) SessionLists() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.sessionLists...)
+}
+
+// SetSessionLists changes what future sessions cover.
+//
+// Refused while a session is running, and that refusal is the entire reason
+// this lives behind its own verb instead of on the dial:
+//
+//	Choosing a session's blocklist on the dial would be a bypass: a user
+//	mid-craving would deselect YouTube and commit to a session that blocks
+//	nothing.
+//
+// A settings screen you can open mid-craving is the dial with extra clicks, so
+// the guard is on the daemon rather than on whether the UI drew the control.
+func (m *Manager) SetSessionLists(ids []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.sess.Active() || m.sess.State == Break {
+		return ErrWouldWeaken
+	}
+	m.sessionLists = append([]string(nil), ids...)
+	sort.Strings(m.sessionLists)
+	m.event("session_lists_changed", fmt.Sprintf(`{"count":%d}`, len(ids)))
+	return m.persistLocked()
 }
 
 // Load restores the session from disk and folds in any reboot that happened
@@ -401,7 +445,15 @@ func (m *Manager) catalogLocked() blocklist.Catalog {
 // applyLocked recomputes the union and hands it to the enforcer. Never an
 // override, never a precedence chain.
 func (m *Manager) applyLocked() {
-	m.enf.Set(enforce.Union(m.catalogLocked(), m.rulesLocked()))
+	m.enf.Set(m.effectiveLocked())
+}
+
+// effectiveLocked is the union plus the user's allowlist, which is not a rule
+// source — it only carves holes in a default-deny window.
+func (m *Manager) effectiveLocked() enforce.Effective {
+	eff := enforce.Union(m.catalogLocked(), m.rulesLocked())
+	eff.Allow = append([]string(nil), m.allow...)
+	return eff
 }
 
 // Effective is what /api/state reports, computed daemon-side. The UI must never
@@ -409,7 +461,7 @@ func (m *Manager) applyLocked() {
 func (m *Manager) Effective() enforce.Effective {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return enforce.Union(m.catalogLocked(), m.rulesLocked())
+	return m.effectiveLocked()
 }
 
 // Bank returns the balance and any open recreation window.
@@ -447,13 +499,52 @@ func (m *Manager) Schedules() ([]schedule.Schedule, []string) {
 }
 
 // PutSchedule adds or replaces a schedule.
+//
+// Editing one whose window is currently live is refused: the rules it
+// contributes are in the effective set right now, and rewriting its hours would
+// weaken enforcement on the same terms a baseline toggle would. There is no
+// delay to invent here — the window ends on its own, which is friction the clock
+// already provides.
 func (m *Manager) PutSchedule(s schedule.Schedule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.scheduleLiveLocked(s.ID) {
+		return ErrWouldWeaken
+	}
 	m.schedules.Add(s)
 	m.event("schedule_saved", fmt.Sprintf(`{"id":%q,"enabled":%t}`, s.ID, s.Enabled))
 	m.applyLocked()
 	return m.persistLocked()
+}
+
+// DeleteSchedule removes a schedule, and refuses while its window is live.
+//
+// Direction-aware like every other mutation: deleting an inactive schedule
+// weakens nothing, because it is not enforcing anything yet.
+func (m *Manager) DeleteSchedule(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.scheduleLiveLocked(id) {
+		return ErrWouldWeaken
+	}
+	if !m.schedules.Remove(id) {
+		return nil // not there; nothing to do
+	}
+	m.event("schedule_deleted", fmt.Sprintf(`{"id":%q}`, id))
+	m.applyLocked()
+	return m.persistLocked()
+}
+
+// scheduleLiveLocked reports whether a schedule's window is in force right now.
+func (m *Manager) scheduleLiveLocked(id string) bool {
+	for _, s := range m.schedules.Active(m.clock.Wall()) {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Baseline returns a snapshot of the rules, ticked so a fired disable is never
@@ -506,6 +597,86 @@ func (m *Manager) CancelBaselineDisable(id string) error {
 	defer m.mu.Unlock()
 	m.baseline.CancelDisable(id)
 	m.event("baseline_disable_cancelled", fmt.Sprintf(`{"id":%q}`, id))
+	return m.persistLocked()
+}
+
+// Allow returns the user's escape list for default-deny windows.
+func (m *Manager) Allow() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.allow...)
+}
+
+// AddAllow widens the escape list, and is refused while a default-deny window is
+// live.
+//
+// This is the mirror of the custom blocklist's rule, and the direction is
+// reversed for the same reason: under default-deny, ADDING to the allowlist is
+// what weakens enforcement. Without the guard, "block everything" is one
+// text-box entry away from "block everything except the site I want".
+//
+// Editing it while nothing is inverted is free — it enforces nothing then.
+func (m *Manager) AddAllow(raws []string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tickLocked()
+
+	if m.effectiveLocked().DefaultDeny {
+		return nil, ErrWouldWeaken
+	}
+
+	have := map[string]bool{}
+	for _, d := range m.allow {
+		have[d] = true
+	}
+	var added []string
+	for _, raw := range raws {
+		d, err := blocklist.NormalizeAllowDomain(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", strings.TrimSpace(raw), err)
+		}
+		if have[d] {
+			continue
+		}
+		have[d] = true
+		added = append(added, d)
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	if len(m.allow)+len(added) > blocklist.MaxCustomDomains {
+		return nil, blocklist.ErrTooManyCustom
+	}
+
+	m.allow = append(m.allow, added...)
+	sort.Strings(m.allow)
+	m.event("allow_added", fmt.Sprintf(`{"count":%d}`, len(added)))
+	m.applyLocked()
+	return added, m.persistLocked()
+}
+
+// RemoveAllow narrows the escape list. Strengthening, so it is always allowed —
+// including mid-window, where it takes effect immediately.
+func (m *Manager) RemoveAllow(raw string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	d, err := blocklist.NormalizeAllowDomain(raw)
+	if err != nil {
+		return err
+	}
+	kept := m.allow[:0:0]
+	for _, existing := range m.allow {
+		if existing != d {
+			kept = append(kept, existing)
+		}
+	}
+	if len(kept) == len(m.allow) {
+		return nil
+	}
+	m.allow = kept
+	m.event("allow_removed", fmt.Sprintf(`{"domain":%q}`, d))
+	m.applyLocked()
 	return m.persistLocked()
 }
 
@@ -650,7 +821,21 @@ func (m *Manager) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return m.st.Put(customKey, string(cu))
+	if err := m.st.Put(customKey, string(cu)); err != nil {
+		return err
+	}
+	sl, err := json.Marshal(m.sessionLists)
+	if err != nil {
+		return err
+	}
+	if err := m.st.Put(sessionListsKey, string(sl)); err != nil {
+		return err
+	}
+	al, err := json.Marshal(m.allow)
+	if err != nil {
+		return err
+	}
+	return m.st.Put(allowKey, string(al))
 }
 
 // loadExtrasLocked restores the bank and schedules. A tampered row is refused
@@ -681,6 +866,32 @@ func (m *Manager) loadExtrasLocked() {
 	} else if err == store.ErrTampered {
 		m.event("custom_signature_invalid", "{}")
 		log.Printf("custom domain row failed its signature; the list is empty until you re-add them")
+	}
+
+	// A tampered allow row empties the list, which is the SAFE direction for a
+	// blocker and the harsh one for the user: a default-deny window with no
+	// allowlist refuses everything but the permanent list. The event is what
+	// makes that visible rather than baffling.
+	if raw, err := m.st.Get(allowKey); err == nil {
+		var domains []string
+		if json.Unmarshal([]byte(raw), &domains) == nil {
+			m.allow = domains
+		}
+	} else if err == store.ErrTampered {
+		m.event("allow_signature_invalid", "{}")
+		log.Printf("allowlist row failed its signature; it is empty until you re-add it")
+	}
+
+	// A tampered row keeps the defaults, which is the safe direction: a session
+	// covering more than the user last chose is a stronger lock, not a weaker one.
+	if raw, err := m.st.Get(sessionListsKey); err == nil {
+		var ids []string
+		if json.Unmarshal([]byte(raw), &ids) == nil && len(ids) > 0 {
+			m.sessionLists = ids
+		}
+	} else if err == store.ErrTampered {
+		m.event("session_lists_signature_invalid", "{}")
+		log.Printf("session list row failed its signature; falling back to the defaults")
 	}
 
 	if raw, err := m.st.Get(schedulesKey); err == nil {

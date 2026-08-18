@@ -3,6 +3,7 @@ package enforce
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/Lushenwar/Flow/internal/blocklist"
 )
@@ -42,13 +43,38 @@ type Effective struct {
 	Lists     map[string]Source
 	Domains   map[string]Source
 	Processes map[string]Source
+
+	// DefaultDeny inverts the DNS layer: everything is refused except the
+	// permanent allowlist and Allow below. Set by any active list that declares
+	// it — "Bedtime" and "Offline" mean everything, and a domain list cannot say
+	// that.
+	DefaultDeny bool
+	// Allow is the user's own escape list, and it is MANDATORY under
+	// DefaultDeny. A default-deny resolver with a wrong allowlist is a machine
+	// with no internet and a fifteen-minute wait to fix it.
+	Allow []string
+}
+
+// Permits reports whether a name survives a default-deny window. The permanent
+// allowlist is checked by the caller and always wins; this is the user's own.
+func (e Effective) Permits(name string) bool {
+	for _, a := range e.Allow {
+		if name == a || strings.HasSuffix(name, "."+a) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e Effective) SortedDomains() []string   { return sortedKeys(e.Domains) }
 func (e Effective) SortedProcesses() []string { return sortedKeys(e.Processes) }
 func (e Effective) SortedLists() []string     { return sortedKeys(e.Lists) }
 
-func (e Effective) Empty() bool { return len(e.Domains) == 0 && len(e.Processes) == 0 }
+// Empty means nothing is being enforced. A default-deny window enforces a great
+// deal while naming few domains, so it is never empty.
+func (e Effective) Empty() bool {
+	return !e.DefaultDeny && len(e.Domains) == 0 && len(e.Processes) == 0
+}
 
 func sortedKeys(m map[string]Source) []string {
 	out := make([]string, 0, len(m))
@@ -70,6 +96,9 @@ func Union(cat blocklist.Catalog, rules []Rule) Effective {
 	}
 	for _, r := range rules {
 		claim(eff.Lists, r.ListID, r.Source)
+		if cat.DefaultDenies(r.ListID) {
+			eff.DefaultDeny = true
+		}
 		domains, procs := cat.Resolve(r.ListID)
 		for _, d := range domains {
 			claim(eff.Domains, d, r.Source)

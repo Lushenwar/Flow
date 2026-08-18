@@ -27,6 +27,12 @@ type Sessions interface {
 	RemoveCustom(raw string) error
 	Schedules() ([]schedule.Schedule, []string)
 	PutSchedule(s schedule.Schedule) error
+	DeleteSchedule(id string) error
+	SessionLists() []string
+	Allow() []string
+	AddAllow(raws []string) ([]string, error)
+	RemoveAllow(raw string) error
+	SetSessionLists(ids []string) error
 	Commit(p session.Plan) (session.Session, error)
 	Abort() (session.Session, error)
 	RequestEscape(after time.Duration) (session.Session, error)
@@ -288,3 +294,45 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) {
 }
 
 func errBody(msg string) map[string]string { return map[string]string{"error": msg} }
+
+// sessionLists is what a session covers by default.
+//
+// Its own endpoint rather than a field on the commit body, because the whole
+// point is that it is chosen when calm: claude.md is explicit that picking a
+// session's blocklist at the moment of commitment is a bypass, since a user
+// mid-craving would deselect YouTube and commit to a session that blocks
+// nothing.
+func (s *Server) sessionLists(w http.ResponseWriter, r *http.Request) {
+	ids := s.sess.SessionLists()
+	if ids == nil {
+		ids = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"listIds": ids})
+}
+
+type sessionListsPut struct {
+	ListIDs []string `json:"listIds"`
+}
+
+func (s *Server) putSessionLists(w http.ResponseWriter, r *http.Request) {
+	var req sessionListsPut
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("bad_request"))
+		return
+	}
+	// An empty list is a session that blocks nothing, which is the exact
+	// outcome the mid-craving edit was going to produce.
+	if len(req.ListIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, errBody("no_lists"))
+		return
+	}
+	if err := s.sess.SetSessionLists(req.ListIDs); err != nil {
+		if errors.Is(err, session.ErrWouldWeaken) {
+			writeJSON(w, http.StatusConflict, errBody("would_weaken"))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, errBody(err.Error()))
+		return
+	}
+	s.sessionLists(w, r)
+}

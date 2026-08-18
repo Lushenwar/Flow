@@ -524,3 +524,51 @@ func TestStateSurvivesAClockJump(t *testing.T) {
 		t.Fatalf("remaining went %d -> %d on a wall-clock change", before, after)
 	}
 }
+
+// Session composition lives behind its own verb, edited when calm. claude.md is
+// explicit that choosing it at the moment of commitment is a bypass: a user
+// mid-craving would deselect YouTube and commit to a session blocking nothing.
+func TestSessionListsAreEditableWhenIdleAndRefusedDuringASession(t *testing.T) {
+	h, c := sessionServer(t)
+
+	var got struct {
+		ListIDs []string `json:"listIds"`
+	}
+	json.NewDecoder(do(t, h, "GET", "/api/session/lists", nil).Body).Decode(&got)
+	if len(got.ListIDs) == 0 {
+		t.Fatal("no default session lists")
+	}
+
+	// Editable while idle.
+	if code := do(t, h, "PUT", "/api/session/lists", sessionListsPut{
+		ListIDs: []string{"preset.video", "preset.shopping"},
+	}).Code; code != http.StatusOK {
+		t.Fatalf("edit while idle returned %d", code)
+	}
+
+	// And a committed session actually uses them.
+	do(t, h, "POST", "/api/session", commitRequest{
+		DurationMinutes: 25, BlocklistIDs: []string{"preset.video", "preset.shopping"},
+	})
+	c.tick(session.DefaultGrace + time.Second)
+
+	// Refused mid-session. The guard is the daemon's, not the UI's: a settings
+	// screen you can open mid-craving is the dial with extra clicks.
+	rec := do(t, h, "PUT", "/api/session/lists", sessionListsPut{
+		ListIDs: []string{"preset.shopping"},
+	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("edit during a session returned %d, want 409", rec.Code)
+	}
+	var body map[string]string
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body["error"] != "would_weaken" {
+		t.Fatalf("error %q", body["error"])
+	}
+
+	// An empty list is a session that blocks nothing — the exact outcome the
+	// mid-craving edit was going to produce.
+	if code := do(t, h, "PUT", "/api/session/lists", sessionListsPut{ListIDs: nil}).Code; code != http.StatusBadRequest {
+		t.Fatalf("empty list returned %d, want 400", code)
+	}
+}

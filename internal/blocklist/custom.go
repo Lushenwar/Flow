@@ -11,6 +11,15 @@ import (
 // delay as a preset. Nothing about it is a side door.
 const CustomListID = "custom.blocked"
 
+// AllowListID is the user's own escape list, and it only means anything while a
+// default-deny rule is enforced. It is MANDATORY equipment for that mode: a
+// default-deny resolver with the wrong allowlist is a machine with no internet
+// and a fifteen-minute wait to fix it.
+//
+// It never overrides the permanent allowlist and never adds to it — it carves
+// holes in an inversion, nothing more.
+const AllowListID = "custom.allowed"
+
 // MaxCustomDomains caps the list. Every entry becomes three lines in the hosts
 // file and a linear scan in the DNS sink's matcher, so an unbounded list is a
 // slow resolver rather than a stronger blocker.
@@ -32,6 +41,21 @@ var (
 // user believes they scoped it, and the enforcement does not match the belief.
 // The caller is expected to show what this returned.
 func NormalizeDomain(raw string) (string, error) {
+	s := normalizeHost(raw)
+	if !validDomain(s) {
+		return "", ErrNotADomain
+	}
+	// The permanent allowlist is not editable by any list, and that has to be
+	// enforced where the user finds out — Resolve strips these anyway, so without
+	// this check the entry would sit in the list looking blocked and do nothing.
+	if Allowed(s) {
+		return "", ErrAllowlisted
+	}
+	return s, nil
+}
+
+// normalizeHost reduces whatever was pasted to a bare host.
+func normalizeHost(raw string) string {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if i := strings.Index(s, "://"); i >= 0 {
 		s = s[i+3:]
@@ -51,17 +75,7 @@ func NormalizeDomain(raw string) (string, error) {
 	// A leading www. is noise: matching is by label-boundary suffix, so
 	// `youtube.com` already covers `www.youtube.com` and every other subdomain.
 	s = strings.TrimPrefix(s, "www.")
-
-	if !validDomain(s) {
-		return "", ErrNotADomain
-	}
-	// The permanent allowlist is not editable by any list, and that has to be
-	// enforced where the user finds out — Resolve strips these anyway, so without
-	// this check the entry would sit in the list looking blocked and do nothing.
-	if Allowed(s) {
-		return "", ErrAllowlisted
-	}
-	return s, nil
+	return s
 }
 
 func validDomain(s string) bool {
@@ -86,6 +100,19 @@ func validDomain(s string) bool {
 		}
 	}
 	return true
+}
+
+// NormalizeAllowDomain is NormalizeDomain without the allowlist refusal.
+//
+// Naming a permanently-allowed domain here is redundant rather than wrong — it
+// is already unblockable — so it is accepted and does nothing, instead of
+// erroring at a user who was being careful.
+func NormalizeAllowDomain(raw string) (string, error) {
+	d, err := NormalizeDomain(raw)
+	if errors.Is(err, ErrAllowlisted) {
+		return normalizeHost(raw), nil
+	}
+	return d, err
 }
 
 // CustomList builds the list value the catalog exposes for user domains.
